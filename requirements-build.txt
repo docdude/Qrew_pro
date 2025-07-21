@@ -1,0 +1,5 @@
+pyinstaller>=5.0
+wheel>=0.37
+setuptools>=60.0
+dmgbuild>=1.5.0; sys_platform == "darwin"
+pywin32>=227; sys_platform == "win32"

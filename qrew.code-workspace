@@ -1,0 +1,50 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/build": true,
+            "**/dist": true,
+            "**/*.pyc": true
+        }
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Quick Build",
+                "type": "shell",
+                "command": "python build.py --clean --platform",
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                }
+            }
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Debug Qrew",
+                "type": "python",
+                "request": "launch",
+                "program": "${workspaceFolder}/qrew/main.py",
+                "console": "integratedTerminal"
+            }
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.flake8",
+            "ms-python.black-formatter"
+        ]
+    }
+}

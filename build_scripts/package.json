@@ -1,0 +1,64 @@
+{
+    "name": "qrew-vscode-integration",
+    "version": "1.0.0",
+    "contributes": {
+        "commands": [
+            {
+                "command": "qrew.build.clean",
+                "title": "Clean Build Directory",
+                "category": "Qrew"
+            },
+            {
+                "command": "qrew.build.platform",
+                "title": "Build Platform Installer",
+                "category": "Qrew"
+            },
+            {
+                "command": "qrew.build.full",
+                "title": "Full Build (Clean + Platform)",
+                "category": "Qrew"
+            },
+            {
+                "command": "qrew.run.debug",
+                "title": "Run Qrew (Debug)",
+                "category": "Qrew"
+            },
+            {
+                "command": "qrew.test.run",
+                "title": "Run Tests",
+                "category": "Qrew"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "qrew.build.full",
+                "key": "ctrl+shift+b",
+                "mac": "cmd+shift+b"
+            },
+            {
+                "command": "qrew.run.debug",
+                "key": "ctrl+f5",
+                "mac": "cmd+f5"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "qrew.build.clean"
+                },
+                {
+                    "command": "qrew.build.platform"
+                },
+                {
+                    "command": "qrew.build.full"
+                },
+                {
+                    "command": "qrew.run.debug"
+                },
+                {
+                    "command": "qrew.test.run"
+                }
+            ]
+        }
+    }
+}
