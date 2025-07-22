@@ -75,7 +75,7 @@ jobs:
         pip install -r requirements-build.txt
 
     - name: Import Code Signing Certificate
-      if: ${{ secrets.CERT_P12_BASE64 }}
+      if: ${{ secrets.CERT_P12_BASE64 != '' }}
       uses: Apple-Actions/import-codesign-certs@v1
       with:
         p12-file-base64: ${{ secrets.CERT_P12_BASE64 }}
@@ -95,6 +95,12 @@ jobs:
       run: |
         echo "Checking dist directory:"
         ls -la dist/
+        if ls dist/*.dmg 1> /dev/null 2>&1; then
+          echo "DMG file details:"
+          ls -la dist/*.dmg
+          echo "Verifying DMG signature:"
+          codesign -dv dist/*.dmg || echo "DMG not signed or verification failed"
+        fi
 
     - name: Upload macOS installer
       uses: actions/upload-artifact@v4
