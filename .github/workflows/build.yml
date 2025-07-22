@@ -117,7 +117,6 @@ jobs:
           python3-dev \
           upx-ucl \
           binutils \
-          strip \
           libxkbcommon-x11-0 \
           libxcb-xinerama0 \
           libxcb-cursor0 \
