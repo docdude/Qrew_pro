@@ -1,227 +1,207 @@
 """
-Linux-specific build script
+Linux packages build script
 """
+
 import os
+import sys
 import subprocess
 import shutil
-import tempfile
 from pathlib import Path
 from build_config import *
 
+
 def build_linux_installer():
-    """Build Linux packages (.deb and .rpm)"""
+    """Build Linux .deb and .rpm packages"""
     print("Building Linux packages...")
-    
+
+    app_dir = DIST_DIR / APP_NAME
+    if not app_dir.exists():
+        print("❌ Linux app directory not found. Run PyInstaller first.")
+        return False
+
     success = True
-    if shutil.which("dpkg-deb"):
-        success &= build_deb_package()
-    else:
-        print("Warning: dpkg-deb not found, skipping .deb package")
-    
-    if shutil.which("rpmbuild"):
-        success &= build_rpm_package()
-    else:
-        print("Warning: rpmbuild not found, skipping .rpm package")
-    
+    if not build_deb_package():
+        success = False
+    if not build_rpm_package():
+        success = False
+
     return success
 
+
 def build_deb_package():
-    """Build .deb package"""
+    """Build Debian .deb package"""
     print("Building .deb package...")
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        pkg_dir = temp_path / f"{APP_NAME.lower()}-{APP_VERSION}"
-        
-        # Create package structure
-        create_deb_structure(pkg_dir)
-        
-        # Build package
-        deb_file = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.deb"
-        cmd = ["dpkg-deb", "--build", str(pkg_dir), str(deb_file)]
-        
-        result = subprocess.run(cmd)
-        if result.returncode == 0:
-            print(f"Successfully created: {deb_file}")
-            return True
-        else:
-            print("Failed to create .deb package")
-            return False
+
+    # Create package structure
+    pkg_dir = BUILD_DIR / f"{APP_NAME}-{APP_VERSION}_deb"
+    create_deb_structure(pkg_dir)
+
+    # Build package
+    try:
+        cmd = [
+            "dpkg-deb",
+            "--build",
+            str(pkg_dir),
+            str(DIST_DIR / f"{APP_NAME}-{APP_VERSION}-linux.deb"),
+        ]
+        subprocess.run(cmd, check=True)
+        print("✅ .deb package created")
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        print(f"❌ .deb build failed: {e}")
+        return False
+
+
+def build_rpm_package():
+    """Build RPM package"""
+    print("Building .rpm package...")
+
+    # Create RPM build directories
+    rpm_build = BUILD_DIR / "rpm_build"
+    for subdir in ["SPECS", "SOURCES", "BUILD", "RPMS", "SRPMS"]:
+        (rpm_build / subdir).mkdir(parents=True, exist_ok=True)
+
+    # Create spec file
+    spec_content = create_rpm_spec()
+    spec_file = rpm_build / "SPECS" / f"{APP_NAME}.spec"
+    with open(spec_file, "w") as f:
+        f.write(spec_content)
+
+    # Create source tarball
+    create_rpm_sources(rpm_build)
+
+    try:
+        cmd = ["rpmbuild", "--define", f"_topdir {rpm_build}", "-ba", str(spec_file)]
+        subprocess.run(cmd, check=True)
+
+        # Copy RPM to dist
+        for rpm_file in (rpm_build / "RPMS").rglob("*.rpm"):
+            shutil.copy2(rpm_file, DIST_DIR / f"{APP_NAME}-{APP_VERSION}-linux.rpm")
+            break
+
+        print("✅ .rpm package created")
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        print(f"❌ .rpm build failed: {e}")
+        return False
+
 
 def create_deb_structure(pkg_dir):
     """Create Debian package directory structure"""
-    # Create directories
-    bin_dir = pkg_dir / "usr" / "bin"
-    app_dir = pkg_dir / "opt" / APP_NAME.lower()
-    desktop_dir = pkg_dir / "usr" / "share" / "applications"
-    icon_dir = pkg_dir / "usr" / "share" / "pixmaps"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    # DEBIAN control directory
     debian_dir = pkg_dir / "DEBIAN"
-    
-    for directory in [bin_dir, app_dir, desktop_dir, icon_dir, debian_dir]:
-        directory.mkdir(parents=True, exist_ok=True)
-    
-    # Copy application files
-    app_source = DIST_DIR / APP_NAME
-    if app_source.exists():
-        shutil.copytree(app_source, app_dir / APP_NAME, dirs_exist_ok=True)
-    
-    # Create launcher script
-    launcher_script = bin_dir / APP_NAME.lower()
-    with open(launcher_script, 'w') as f:
-        f.write(f'''#!/bin/bash
-cd /opt/{APP_NAME.lower()}/{APP_NAME}
-./{APP_NAME}
-''')
-    launcher_script.chmod(0o755)
-    
-    # Copy icon
-    icon_source = get_icon_for_platform()
-    if Path(icon_source).exists():
-        shutil.copy2(icon_source, icon_dir / f"{APP_NAME.lower()}.png")
-    
-    # Create desktop file
-    desktop_file = desktop_dir / f"{APP_NAME.lower()}.desktop"
-    with open(desktop_file, 'w') as f:
-        f.write(create_desktop_file())
-    
-    # Create control file
-    control_file = debian_dir / "control"
-    with open(control_file, 'w') as f:
-        f.write(create_deb_control())
+    debian_dir.mkdir(exist_ok=True)
 
-def build_rpm_package():
-    """Build .rpm package"""
-    print("Building .rpm package...")
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        
-        # Create RPM spec file
-        spec_content = create_rpm_spec()
-        spec_file = temp_path / f"{APP_NAME.lower()}.spec"
-        
-        with open(spec_file, 'w') as f:
-            f.write(spec_content)
-        
-        # Create source tarball
-        create_rpm_sources(temp_path)
-        
-        # Build RPM
-        cmd = [
-            "rpmbuild",
-            "-ba",
-            "--define", f"_topdir {temp_path}",
-            str(spec_file)
-        ]
-        
-        result = subprocess.run(cmd)
-        if result.returncode == 0:
-            # Copy built RPM to dist directory
-            rpm_dir = temp_path / "RPMS" / "x86_64"
-            for rpm_file in rpm_dir.glob("*.rpm"):
-                target = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.rpm"
-                shutil.copy2(rpm_file, target)
-                print(f"Successfully created: {target}")
-            return True
-        else:
-            print("Failed to create .rpm package")
-            return False
-
-def create_desktop_file():
-    """Create .desktop file for Linux"""
-    return f'''[Desktop Entry]
-Version=1.0
-Type=Application
-Name={APP_NAME}
-Comment={APP_DESCRIPTION}
-Exec={APP_NAME.lower()}
-Icon={APP_NAME.lower()}
-Terminal=false
-Categories=AudioVideo;Audio;Science;
-StartupNotify=true
-'''
-
-def create_deb_control():
-    """Create Debian control file"""
-    return f'''Package: {APP_NAME.lower()}
+    # Control file
+    control_content = f"""Package: {APP_NAME.lower()}
 Version: {APP_VERSION}
-Section: science
+Section: utils
 Priority: optional
 Architecture: amd64
-Depends: python3, python3-pyqt5, vlc
-Maintainer: {APP_AUTHOR} <your.email@example.com>
+Maintainer: {APP_AUTHOR}
 Description: {APP_DESCRIPTION}
  Automated loudspeaker measurement system using REW API.
- Provides GUI interface for capturing and processing speaker measurements.
-'''
+"""
+
+    with open(debian_dir / "control", "w") as f:
+        f.write(control_content)
+
+    # Application files
+    app_install_dir = pkg_dir / "opt" / APP_NAME
+    app_install_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(DIST_DIR / APP_NAME, app_install_dir, dirs_exist_ok=True)
+
+    # Desktop file
+    desktop_dir = pkg_dir / "usr" / "share" / "applications"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+
+    desktop_content = f"""[Desktop Entry]
+Name={APP_NAME}
+Comment={APP_DESCRIPTION}
+Exec=/opt/{APP_NAME}/{APP_NAME}
+Icon=/opt/{APP_NAME}/icon.png
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;
+"""
+
+    with open(desktop_dir / f"{APP_NAME.lower()}.desktop", "w") as f:
+        f.write(desktop_content)
+
+    # Launcher script
+    bin_dir = pkg_dir / "usr" / "local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    launcher_content = f"""#!/bin/bash
+cd /opt/{APP_NAME}
+./{APP_NAME} "$@"
+"""
+
+    launcher_file = bin_dir / APP_NAME.lower()
+    with open(launcher_file, "w") as f:
+        f.write(launcher_content)
+    launcher_file.chmod(0o755)
+
 
 def create_rpm_spec():
     """Create RPM spec file"""
-    return f'''Name:           {APP_NAME.lower()}
-Version:        {APP_VERSION}
-Release:        1%{{?dist}}
-Summary:        {APP_DESCRIPTION}
+    return f"""
+Name: {APP_NAME.lower()}
+Version: {APP_VERSION}
+Release: 1%{{?dist}}
+Summary: {APP_DESCRIPTION}
 
-License:        GPL-3.0
-URL:            {APP_URL}
-Source0:        %{{name}}-%{{version}}.tar.gz
-
-BuildArch:      x86_64
-Requires:       python3, python3-qt5, vlc
+License: GPL-3.0
+URL: {APP_URL}
+Source0: %{{name}}-%{{version}}.tar.gz
 
 %description
 {APP_DESCRIPTION}
-Automated loudspeaker measurement system using REW API.
 
 %prep
 %setup -q
 
-%build
-# Nothing to build
-
 %install
-mkdir -p %{{buildroot}}/opt/{APP_NAME.lower()}
-mkdir -p %{{buildroot}}/usr/bin
-mkdir -p %{{buildroot}}/usr/share/applications
-mkdir -p %{{buildroot}}/usr/share/pixmaps
+mkdir -p %{{buildroot}}/opt/{APP_NAME}
+cp -r * %{{buildroot}}/opt/{APP_NAME}/
 
-cp -r * %{{buildroot}}/opt/{APP_NAME.lower()}/
-
-# Create launcher script
-cat > %{{buildroot}}/usr/bin/{APP_NAME.lower()} << EOF
+mkdir -p %{{buildroot}}/usr/local/bin
+cat > %{{buildroot}}/usr/local/bin/{APP_NAME.lower()} << 'EOF'
 #!/bin/bash
-cd /opt/{APP_NAME.lower()}/{APP_NAME}
-./{APP_NAME}
+cd /opt/{APP_NAME}
+./{APP_NAME} "$@"
 EOF
-chmod +x %{{buildroot}}/usr/bin/{APP_NAME.lower()}
-
-# Install desktop file
-cat > %{{buildroot}}/usr/share/applications/{APP_NAME.lower()}.desktop << EOF
-{create_desktop_file()}
-EOF
-
-# Install icon
-cp {get_icon_for_platform()} %{{buildroot}}/usr/share/pixmaps/{APP_NAME.lower()}.png
+chmod +x %{{buildroot}}/usr/local/bin/{APP_NAME.lower()}
 
 %files
-/opt/{APP_NAME.lower()}/*
-/usr/bin/{APP_NAME.lower()}
-/usr/share/applications/{APP_NAME.lower()}.desktop
-/usr/share/pixmaps/{APP_NAME.lower()}.png
+/opt/{APP_NAME}/
+/usr/local/bin/{APP_NAME.lower()}
 
 %changelog
-* Wed Jan 03 2025 {APP_AUTHOR} - {APP_VERSION}-1
-- Initial package
-'''
+* %(date "+%%a %%b %%d %%Y") {APP_AUTHOR} - {APP_VERSION}-1
+- Initial release
+"""
 
-def create_rpm_sources(build_dir):
-    """Create source tarball for RPM build"""
-    sources_dir = build_dir / "SOURCES"
-    sources_dir.mkdir(exist_ok=True)
-    
-    # Copy application files
-    app_source = DIST_DIR / APP_NAME
-    if app_source.exists():
-        tarball = sources_dir / f"{APP_NAME.lower()}-{APP_VERSION}.tar.gz"
-        cmd = ["tar", "-czf", str(tarball), "-C", str(DIST_DIR), APP_NAME]
-        subprocess.run(cmd, check=True)
+
+def create_rpm_sources(rpm_build):
+    """Create source tarball for RPM"""
+    sources_dir = rpm_build / "SOURCES"
+    app_dir = DIST_DIR / APP_NAME
+
+    # Create tarball
+    tarball_name = f"{APP_NAME.lower()}-{APP_VERSION}.tar.gz"
+    cmd = [
+        "tar",
+        "-czf",
+        str(sources_dir / tarball_name),
+        "-C",
+        str(app_dir.parent),
+        app_dir.name,
+    ]
+    subprocess.run(cmd, check=True)
+
+
+if __name__ == "__main__":
+    build_linux_installer()
