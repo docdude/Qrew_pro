@@ -75,11 +75,11 @@ jobs:
         pip install -r requirements-build.txt
 
     - name: Import Code Signing Certificate
-      if: ${{ secrets.CERT_P12_BASE64 != '' }}
       uses: Apple-Actions/import-codesign-certs@v1
       with:
         p12-file-base64: ${{ secrets.CERT_P12_BASE64 }}
         p12-password: ${{ secrets.CERT_PASSWORD }}
+      continue-on-error: true
 
     - name: Build macOS installer
       run: |
