@@ -112,6 +112,10 @@ jobs:
           libvlc-dev \
           dpkg-dev \
           rpm \
+          rpm-build \
+          rpmbuild \
+          rpmdevtools \
+          rpmlint \
           build-essential \
           python3-dev \
           libxkbcommon-x11-0 \
@@ -213,6 +217,6 @@ jobs:
           1. Download the appropriate package for your platform
           2. Install VLC Media Player if not already installed
           3. Install/extract Qrew
-          4. Run Qrew and configure REW API settings
+          4. Launch REW, start REW API (need pro upgrade license to control REW via the API)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
