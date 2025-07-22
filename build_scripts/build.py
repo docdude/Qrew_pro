@@ -8,7 +8,8 @@ import subprocess
 import shutil
 from pathlib import Path
 import argparse
-import json
+import time
+import platform as platform_module
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -17,7 +18,7 @@ try:
     from build_scripts.build_config import *
 except ImportError:
     print(
-        "Error: Could not import build_config. Make sure build_scripts/build_config.py exists."
+        "ERROR: Could not import build_config. Make sure build_scripts/build_config.py exists."
     )
     sys.exit(1)
 
@@ -37,15 +38,17 @@ def run_command(cmd, cwd=None, timeout=600):
             print("STDERR:", result.stderr)
         return True
     except subprocess.TimeoutExpired:
-        print(f"❌ Command timed out after {timeout} seconds")
+        print(f"ERROR: Command timed out after {timeout} seconds")
         return False
     except subprocess.CalledProcessError as e:
-        print(f"❌ Command failed with exit code {e.returncode}")
-        print(f"STDOUT: {e.stdout}")
-        print(f"STDERR: {e.stderr}")
+        print(f"ERROR: Command failed with exit code {e.returncode}")
+        if e.stdout:
+            print(f"STDOUT: {e.stdout}")
+        if e.stderr:
+            print(f"STDERR: {e.stderr}")
         return False
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"ERROR: Unexpected error: {e}")
         return False
 
 
@@ -66,6 +69,39 @@ def install_build_dependencies():
     return run_command(cmd)
 
 
+def check_build_environment():
+    """Check build environment and dependencies"""
+    print("Checking build environment...")
+
+    # Check Python version
+    py_version = sys.version_info
+    if py_version < (3, 8):
+        print(
+            f"WARNING: Python {py_version.major}.{py_version.minor} may not be fully supported"
+        )
+
+    # Check platform
+    print(f"Platform: {platform_module.system()} {platform_module.release()}")
+    print(f"Architecture: {platform_module.machine()}")
+
+    # Check disk space
+    if hasattr(shutil, "disk_usage"):
+        total, used, free = shutil.disk_usage(ROOT_DIR)
+        free_gb = free // (1024**3)
+        print(f"Available disk space: {free_gb} GB")
+        if free_gb < 2:
+            print("WARNING: Low disk space may cause build to fail")
+
+    # Check required directories
+    required_dirs = [ROOT_DIR / "qrew", ASSETS_DIR, ICONS_DIR]
+    for dir_path in required_dirs:
+        if not dir_path.exists():
+            print(f"ERROR: Required directory not found: {dir_path}")
+            return False
+
+    return True
+
+
 def clean_build():
     """Clean previous build artifacts safely"""
     print("Cleaning previous builds...")
@@ -74,18 +110,27 @@ def clean_build():
     for path in [BUILD_DIR, DIST_DIR]:
         try:
             if path.exists() and path.is_dir():
+                print(f"Removing {path}...")
                 shutil.rmtree(path)
-                print(f"Removed {path}")
+                print(f"SUCCESS: Removed {path}")
         except Exception as e:
-            print(f"Failed to remove {path}: {e}")
+            print(f"WARNING: Failed to remove {path}: {e}")
 
     # Remove .spec files in the root directory
     for spec_file in ROOT_DIR.glob("*.spec"):
         try:
             spec_file.unlink()
-            print(f"Removed {spec_file}")
+            print(f"SUCCESS: Removed {spec_file}")
         except Exception as e:
-            print(f"Failed to remove {spec_file}: {e}")
+            print(f"WARNING: Failed to remove {spec_file}: {e}")
+
+    # Clean Python cache
+    for cache_dir in ROOT_DIR.rglob("__pycache__"):
+        try:
+            shutil.rmtree(cache_dir)
+            print(f"SUCCESS: Removed cache {cache_dir}")
+        except Exception as e:
+            print(f"WARNING: Failed to remove cache {cache_dir}: {e}")
 
     # Recreate necessary directories
     ensure_directories()
@@ -102,7 +147,7 @@ def ensure_macos_icon():
 
     # If ICNS already exists, we're good
     if icns_path.exists():
-        print(f"✅ Found existing ICNS: {icns_path}")
+        print(f"SUCCESS: Found existing ICNS: {icns_path}")
         return True
 
     # Try to convert appiconset to icns
@@ -115,18 +160,19 @@ def ensure_macos_icon():
                 capture_output=True,
                 text=True,
             )
-            print(f"✅ Created {icns_path}")
+            print(f"SUCCESS: Created {icns_path}")
             return True
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to convert appiconset: {e}")
-            print(f"Stderr: {e.stderr}")
+            print(f"ERROR: Failed to convert appiconset: {e}")
+            if e.stderr:
+                print(f"Stderr: {e.stderr}")
 
     # Try to create iconset from PNG
     if png_path.exists():
         print(f"Creating iconset from {png_path}")
         return create_iconset_from_png(png_path, icns_path)
 
-    print("⚠️  No suitable icon found, continuing without icon")
+    print("WARNING: No suitable icon found, continuing without icon")
     return False
 
 
@@ -140,6 +186,7 @@ def create_iconset_from_png(png_path, icns_path):
 
         # Load source image
         source_img = Image.open(png_path)
+        print(f"Loaded source image: {png_path} ({source_img.size})")
 
         # Icon sizes for macOS
         sizes = [
@@ -160,6 +207,8 @@ def create_iconset_from_png(png_path, icns_path):
             resized = source_img.resize((size, size), Image.Resampling.LANCZOS)
             resized.save(iconset_path / filename, "PNG")
 
+        print(f"Generated {len(sizes)} icon sizes")
+
         # Convert to ICNS
         result = subprocess.run(
             ["iconutil", "-c", "icns", str(iconset_path), "-o", str(icns_path)],
@@ -168,14 +217,14 @@ def create_iconset_from_png(png_path, icns_path):
             text=True,
         )
 
-        print(f"✅ Created ICNS from PNG: {icns_path}")
+        print(f"SUCCESS: Created ICNS from PNG: {icns_path}")
         return True
 
     except ImportError:
-        print("❌ Pillow not installed, cannot convert PNG to iconset")
+        print("ERROR: Pillow not installed, cannot convert PNG to iconset")
         return False
     except Exception as e:
-        print(f"❌ Failed to create iconset: {e}")
+        print(f"ERROR: Failed to create iconset: {e}")
         return False
 
 
@@ -192,11 +241,51 @@ def check_python_environment():
         sys.path.insert(0, str(ROOT_DIR))
         from qrew.main import main
 
-        print("✅ Main module import successful")
+        print("SUCCESS: Main module import successful")
         return True
     except ImportError as e:
-        print(f"❌ Cannot import main module: {e}")
+        print(f"ERROR: Cannot import main module: {e}")
+        print("This may indicate missing dependencies or incorrect project structure")
         return False
+
+
+def verify_qrew_modules():
+    """Verify all required Qrew modules can be imported"""
+    print("Verifying Qrew modules...")
+
+    required_modules = [
+        "qrew.Qrew",
+        "qrew.Qrew_api_helper",
+        "qrew.Qrew_message_handlers",
+        "qrew.Qrew_common",
+        "qrew.Qrew_styles",
+        "qrew.Qrew_button",
+        "qrew.Qrew_dialogs",
+        "qrew.Qrew_workers",
+        "qrew.Qrew_settings",
+        "qrew.Qrew_measurement_metrics",
+        "qrew.Qrew_micwidget_icons",
+        "qrew.Qrew_vlc_helper_v2",
+        "qrew.Qrew_messagebox",
+        "qrew.Qrew_resources",
+    ]
+
+    missing_modules = []
+
+    for module_name in required_modules:
+        try:
+            __import__(module_name)
+            print(f"SUCCESS: {module_name}")
+        except ImportError as e:
+            print(f"WARNING: {module_name} - {e}")
+            missing_modules.append(module_name)
+
+    if missing_modules:
+        print(f"WARNING: {len(missing_modules)} modules could not be imported")
+        return False
+
+    print("SUCCESS: All required modules verified")
+    return True
 
 
 def build_pyinstaller():
@@ -207,6 +296,10 @@ def build_pyinstaller():
     if not check_python_environment():
         return False
 
+    # Verify Qrew modules
+    if not verify_qrew_modules():
+        print("WARNING: Some modules missing, build may fail")
+
     # Ensure macOS icon if needed
     if IS_MACOS:
         ensure_macos_icon()
@@ -216,43 +309,88 @@ def build_pyinstaller():
     if not run_command(
         [sys.executable, "-m", "PyInstaller", "--version"], cwd=ROOT_DIR
     ):
-        print("❌ PyInstaller not working properly")
+        print("ERROR: PyInstaller not working properly")
         return False
 
     # Generate spec file
+    print("Generating PyInstaller spec file...")
     spec_content = generate_pyinstaller_spec()
     spec_file = ROOT_DIR / f"{APP_NAME}.spec"
 
     with open(spec_file, "w") as f:
         f.write(spec_content)
-    print(f"✅ Generated spec file: {spec_file}")
+    print(f"SUCCESS: Generated spec file: {spec_file}")
 
     # Run PyInstaller
     print("Starting PyInstaller build...")
-    cmd = [sys.executable, "-m", "PyInstaller", "--log-level=INFO", str(spec_file)]
+    start_time = time.time()
 
-    success = run_command(cmd, cwd=ROOT_DIR, timeout=900)  # 15 minutes timeout
+    cmd = [sys.executable, "-m", "PyInstaller", "--log-level=INFO", str(spec_file)]
+    success = run_command(cmd, cwd=ROOT_DIR, timeout=1200)  # 20 minutes timeout
+
+    build_time = time.time() - start_time
+    print(f"Build took {build_time:.1f} seconds")
 
     if success:
-        print("✅ PyInstaller build completed successfully")
+        print("SUCCESS: PyInstaller build completed successfully")
 
-        # Verify output
+        # Verify output and report sizes
         if IS_MACOS:
             app_path = DIST_DIR / f"{APP_NAME}.app"
             if app_path.exists():
-                print(f"✅ macOS app bundle created: {app_path}")
+                size = get_directory_size(app_path)
+                print(f"SUCCESS: macOS app bundle created: {app_path} ({size:.1f} MB)")
+
+                # Verify app structure
+                if verify_macos_app_structure(app_path):
+                    print("SUCCESS: App bundle structure verified")
+                else:
+                    print("WARNING: App bundle structure issues detected")
+
             else:
-                print("❌ macOS app bundle not found")
+                print("ERROR: macOS app bundle not found")
                 return False
         else:
             exe_dir = DIST_DIR / APP_NAME
             if exe_dir.exists():
-                print(f"✅ Application directory created: {exe_dir}")
+                size = get_directory_size(exe_dir)
+                print(
+                    f"SUCCESS: Application directory created: {exe_dir} ({size:.1f} MB)"
+                )
             else:
-                print("❌ Application directory not found")
+                print("ERROR: Application directory not found")
                 return False
 
     return success
+
+
+def get_directory_size(path):
+    """Get directory size in MB"""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            try:
+                total_size += os.path.getsize(filepath)
+            except:
+                pass
+    return total_size / (1024 * 1024)
+
+
+def verify_macos_app_structure(app_path):
+    """Verify macOS app bundle structure"""
+    required_paths = [
+        app_path / "Contents" / "Info.plist",
+        app_path / "Contents" / "MacOS" / APP_NAME,
+        app_path / "Contents" / "Resources",
+    ]
+
+    for path in required_paths:
+        if not path.exists():
+            print(f"ERROR: Required app component missing: {path}")
+            return False
+
+    return True
 
 
 def generate_pyinstaller_spec():
@@ -262,7 +400,7 @@ def generate_pyinstaller_spec():
     # Data files - only include files that exist
     data_files = []
 
-    # Add qrew package files
+    # Add qrew package assets
     qrew_assets = ROOT_DIR / "qrew" / "assets"
     if qrew_assets.exists():
         data_files.append(f"('{qrew_assets}', 'assets')")
@@ -275,14 +413,14 @@ def generate_pyinstaller_spec():
             if py_file.name != "__pycache__":
                 qrew_py_files.append(f"('{py_file}', 'qrew')")
 
-    # Add other data files
+    # Add documentation files
     for file_path in [ROOT_DIR / "README.md", ROOT_DIR / "LICENSE"]:
         if file_path.exists():
             data_files.append(f"('{file_path}', '.')")
 
     data_files_str = "[" + ", ".join(data_files + qrew_py_files) + "]"
 
-    # Hidden imports - comprehensive list
+    # Hidden imports - verified against actual module structure
     hidden_imports = [
         "qrew",
         "qrew.Qrew",
@@ -299,19 +437,22 @@ def generate_pyinstaller_spec():
         "qrew.Qrew_vlc_helper_v2",
         "qrew.Qrew_messagebox",
         "qrew.Qrew_resources",
+        # External
         "requests",
         "flask",
+        "gevent",
         "numpy",
         "pandas",
-        "gevent",
         "vlc",
         "colour",
+        # PyQt5 modules
         "PyQt5.sip",
         "PyQt5.QtCore",
         "PyQt5.QtGui",
         "PyQt5.QtWidgets",
     ]
 
+    # Modules to exclude for smaller build size
     excludes_list = [
         "tkinter",
         "matplotlib",
@@ -321,9 +462,13 @@ def generate_pyinstaller_spec():
         "PyQt5.QtWebSockets",
         "PyQt5.QtDBus",
         "PyQt5.QtPrintSupport",
+        "test",
+        "unittest",
+        "pdb",
+        "pydoc",
     ]
 
-    # macOS bundle info
+    # macOS bundle section
     bundle_section = ""
     if IS_MACOS:
         bundle_info = get_macos_bundle_info()
@@ -408,21 +553,35 @@ def main():
         "--platform", action="store_true", help="Build platform-specific installer"
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--verify", action="store_true", help="Verify environment only")
 
     args = parser.parse_args()
 
-    print(f"🚀 Building Qrew for {PLATFORM}")
-    print(f"📁 Root directory: {ROOT_DIR}")
-    print(f"🔧 Build directory: {BUILD_DIR}")
-    print(f"📦 Distribution directory: {DIST_DIR}")
+    print("=" * 60)
+    print(f"QREW BUILD SYSTEM - {PLATFORM.upper()}")
+    print("=" * 60)
+    print(f"Root directory: {ROOT_DIR}")
+    print(f"Build directory: {BUILD_DIR}")
+    print(f"Distribution directory: {DIST_DIR}")
+    print(f"App version: {APP_VERSION}")
+
+    # Check build environment
+    if not check_build_environment():
+        print("ERROR: Build environment check failed")
+        sys.exit(1)
+
+    # If verify only, exit here
+    if args.verify:
+        print("SUCCESS: Environment verification completed")
+        sys.exit(0)
 
     # Install dependencies if requested
     if args.deps:
-        print("📥 Installing build dependencies...")
+        print("Installing build dependencies...")
         if not install_build_dependencies():
-            print("❌ Failed to install build dependencies")
+            print("ERROR: Failed to install build dependencies")
             sys.exit(1)
-        print("✅ Build dependencies installed successfully")
+        print("SUCCESS: Build dependencies installed successfully")
 
     # Clean build if requested
     if args.clean:
@@ -433,65 +592,88 @@ def main():
 
     # Build with PyInstaller
     if not build_pyinstaller():
-        print("❌ PyInstaller build failed")
+        print("ERROR: PyInstaller build failed")
         sys.exit(1)
 
     # Build platform-specific installer if requested
     if args.platform:
-        print(f"🔧 Building {PLATFORM} platform installer...")
+        print(f"Building {PLATFORM} platform installer...")
 
         if IS_MACOS:
             try:
-                from build_macos import build_macos_installer
+                from build_scripts.build_macos import build_macos_installer
 
                 if build_macos_installer():
-                    print("✅ macOS installer created successfully")
+                    print("SUCCESS: macOS installer created successfully")
                 else:
-                    print("❌ macOS installer creation failed")
+                    print("ERROR: macOS installer creation failed")
+                    sys.exit(1)
             except ImportError as e:
-                print(f"❌ Could not import macOS build module: {e}")
+                print(f"ERROR: Could not import macOS build module: {e}")
+                sys.exit(1)
 
         elif IS_WINDOWS:
             try:
-                from build_windows import build_windows_installer
+                from build_scripts.build_windows import build_windows_installer
 
                 if build_windows_installer():
-                    print("✅ Windows installer created successfully")
+                    print("SUCCESS: Windows installer created successfully")
                 else:
-                    print("❌ Windows installer creation failed")
+                    print("ERROR: Windows installer creation failed")
+                    sys.exit(1)
             except ImportError as e:
-                print(f"❌ Could not import Windows build module: {e}")
+                print(f"ERROR: Could not import Windows build module: {e}")
+                sys.exit(1)
 
         elif IS_LINUX:
             try:
-                from build_linux import build_linux_installer
+                from build_scripts.build_linux import build_linux_installer
 
                 if build_linux_installer():
-                    print("✅ Linux packages created successfully")
+                    print("SUCCESS: Linux packages created successfully")
                 else:
-                    print("❌ Linux package creation failed")
+                    print("ERROR: Linux package creation failed")
+                    sys.exit(1)
             except ImportError as e:
-                print(f"❌ Could not import Linux build module: {e}")
+                print(f"ERROR: Could not import Linux build module: {e}")
+                sys.exit(1)
 
-    # Print summary
-    print("\n" + "=" * 50)
-    print("🎉 BUILD COMPLETED")
-    print("=" * 50)
+    # Print build summary
+    print("\n" + "=" * 60)
+    print("BUILD COMPLETED SUCCESSFULLY")
+    print("=" * 60)
 
     if DIST_DIR.exists():
-        print("📦 Output files:")
-        for item in DIST_DIR.iterdir():
+        print("Output files:")
+        total_size = 0
+        for item in sorted(DIST_DIR.iterdir()):
             if item.is_file():
                 size_mb = item.stat().st_size / (1024 * 1024)
-                print(f"  📄 {item.name} ({size_mb:.1f} MB)")
+                total_size += size_mb
+                print(f"  FILE: {item.name} ({size_mb:.1f} MB)")
             elif item.is_dir():
-                print(f"  📁 {item.name}/")
+                size_mb = get_directory_size(item)
+                total_size += size_mb
+                print(f"  DIR:  {item.name}/ ({size_mb:.1f} MB)")
 
+        print(f"\nTotal output size: {total_size:.1f} MB")
+
+    # Platform-specific instructions
     if IS_MACOS:
         app_path = DIST_DIR / f"{APP_NAME}.app"
         if app_path.exists():
-            print(f"\n🍎 macOS app created: {app_path}")
-            print(f"🚀 Test with: open {app_path}")
+            print(f"\nmacOS app created: {app_path}")
+            print(f"Test with: open '{app_path}'")
+    elif IS_WINDOWS:
+        exe_path = DIST_DIR / APP_NAME / f"{APP_NAME}.exe"
+        if exe_path.exists():
+            print(f"\nWindows executable created: {exe_path}")
+            print(f"Test with: '{exe_path}'")
+    elif IS_LINUX:
+        exe_path = DIST_DIR / APP_NAME / APP_NAME
+        if exe_path.exists():
+            print(f"\nLinux executable created: {exe_path}")
+            print(f"Test with: '{exe_path}'")
 
 
 if __name__ == "__main__":
