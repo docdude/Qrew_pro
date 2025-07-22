@@ -22,7 +22,7 @@ pip install qrew
 #### From Source:
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/qrew.git
+git clone https://github.com/docdude/Qrew_pro.git
 cd qrew
 
 # Install in development mode
@@ -45,7 +45,7 @@ Pre-built installers are available for:
 - **Windows**: `.exe` installer with desktop integration  
 - **Linux**: `.deb` and `.rpm` packages with desktop files
 
-Download the latest installer from the [Releases](https://github.com/yourusername/qrew/releases) page.
+Download the latest installer from the [Releases](https://github.com/docdude/Qrew_pro/releases) page.
 
 ### Dependencies
 
@@ -135,7 +135,7 @@ Runs a small Flask server so REW can POST status, warnings, and errors. MessageB
 
 ```bash
 # Clone repository
-git clone https://github.com/docdude/qrew.git
+git clone https://github.com/docdude/Qrew_pro.git
 cd qrew
 
 # Create virtual environment

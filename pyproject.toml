@@ -31,7 +31,6 @@ dependencies = [
     "flask>=2.0.0",
     "numpy>=1.19.0",
     "pandas>=1.2.0",
-    "scipy>=1.6.0",
     "colour>=0.1.5",
     "gevent>=22.10.2",
     "python-vlc>=3.0.0; platform_system != 'Windows'",
@@ -50,8 +49,8 @@ dev = [
 Qrew = "Qrew.main:main"
 
 [project.urls]
-Homepage = "https://github.com/docdude/qrew"
-Issues = "https://github.com/docdude/qrew/issues"
+Homepage = "https://github.com/docdude/Qrew_pro"
+Issues = "https://github.com/docdude/Qrew_pro/issues"
 
 [tool.setuptools]
 packages = ["Qrew"]

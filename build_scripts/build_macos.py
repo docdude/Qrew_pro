@@ -1,38 +1,40 @@
 """
 macOS-specific build script
 """
+
 import os
 import subprocess
 import shutil
 from pathlib import Path
 from build_config import *
 
+
 def build_macos_installer():
     """Build macOS .app bundle and .dmg"""
     print("Building macOS installer...")
-    
+
     app_path = DIST_DIR / f"{APP_NAME}.app"
     dmg_path = DIST_DIR / f"{APP_NAME}-{APP_VERSION}-macos.dmg"
-    
+
     if not app_path.exists():
         print("Error: .app bundle not found. Run PyInstaller first.")
         return False
-    
+
     # Create DMG configuration
     dmg_config = create_dmg_config()
     config_path = ROOT_DIR / "dmg_config.py"
-    
-    with open(config_path, 'w') as f:
+
+    with open(config_path, "w") as f:
         f.write(dmg_config)
-    
+
     # Build DMG
     cmd = ["dmgbuild", "-s", str(config_path), APP_NAME, str(dmg_path)]
     result = subprocess.run(cmd, cwd=ROOT_DIR)
-    
+
     # Cleanup
     if config_path.exists():
         config_path.unlink()
-    
+
     if result.returncode == 0:
         print(f"Successfully created: {dmg_path}")
         return True
@@ -40,17 +42,33 @@ def build_macos_installer():
         print("Failed to create DMG")
         return False
 
+
 def create_dmg_config():
-    """Create DMG build configuration"""
-    return f'''
+    # Calculate app size dynamically
+    app_path = DIST_DIR / f"{APP_NAME}.app"
+    if app_path.exists():
+        import subprocess
+
+        result = subprocess.run(
+            ["du", "-sk", str(app_path)], capture_output=True, text=True
+        )
+        app_size_kb = int(result.stdout.split()[0])
+        # Add 50% padding and convert to MB
+        dmg_size_mb = int((app_size_kb * 1.5) / 1024)
+        # Minimum 500MB, maximum 2GB
+        dmg_size = max(500, min(2048, dmg_size_mb))
+    else:
+        dmg_size = 800  # Default fallback
+
+    return f"""
 # DMG build configuration
 import os
 from pathlib import Path
 
-# Volume settings
+# Volume settings  
 volume_name = "{APP_NAME}"
 format = "UDBZ"  # Compressed
-size = "100M"
+size = "{dmg_size}M"
 
 # Files to include
 files = [
@@ -74,59 +92,67 @@ icon_locations = {{
 }}
 
 # Background image (if you have one)
-# background = str(Path("{ASSETS_DIR}") / "dmg_background.png")
-
+#background = str(Path("{ASSETS_DIR}") / "dmg_background.png")
+background = str("#cafeee")
 # License agreement
-# license = {{
-#     "default-language": "en_US",
-#     "licenses": {{
-#         "en_US": str(Path("{ROOT_DIR}") / "LICENSE"),
-#     }},
-# }}
-'''
+license = {{
+    "default-language": "en_US", 
+    "licenses": {{
+        "en_US": str(Path("{ROOT_DIR}") / "LICENSE"),
+    }},
+    "show-license": True,
+}}
+"""
+
 
 def sign_app():
     """Code sign the app (requires Apple Developer certificate)"""
     app_path = DIST_DIR / f"{APP_NAME}.app"
-    
+
     # Check if signing certificate is available
     result = subprocess.run(
         ["security", "find-identity", "-v", "-p", "codesigning"],
-        capture_output=True, text=True
+        capture_output=True,
+        text=True,
     )
-    
+
     if "Developer ID Application" not in result.stdout:
         print("Warning: No code signing certificate found. Skipping signing.")
         return True
-    
+
     print("Code signing app...")
     cmd = [
         "codesign",
         "--force",
-        "--deep", 
-        "--sign", "Developer ID Application",
-        str(app_path)
+        "--deep",
+        "--sign",
+        "Developer ID Application",
+        str(app_path),
     ]
-    
+
     result = subprocess.run(cmd)
     return result.returncode == 0
+
 
 def notarize_app():
     """Notarize the app with Apple (requires Apple Developer account)"""
     dmg_path = DIST_DIR / f"{APP_NAME}-{APP_VERSION}-macos.dmg"
-    
+
     print("Notarizing app (this may take several minutes)...")
     cmd = [
-        "xcrun", "notarytool", "submit",
+        "xcrun",
+        "notarytool",
+        "submit",
         str(dmg_path),
-        "--keychain-profile", "notarytool-password",
-        "--wait"
+        "--keychain-profile",
+        "notarytool-password",
+        "--wait",
     ]
-    
+
     result = subprocess.run(cmd)
     if result.returncode == 0:
         # Staple the notarization
         cmd = ["xcrun", "stapler", "staple", str(dmg_path)]
         subprocess.run(cmd)
-    
+
     return result.returncode == 0

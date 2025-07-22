@@ -63,6 +63,9 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
+            "args": [
+                "--clean"
+            ],
             "justMyCode": false
         }
     ]

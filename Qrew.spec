@@ -1,17 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+from pathlib import Path
+
+# Ensure qrew package can be found
+sys.path.insert(0, str(Path.cwd() / 'qrew'))
+sys.path.insert(0, str(Path.cwd()))
+
 block_cipher = None
 
 a = Analysis(
-    ['qrew/main.py'],  # Fixed: Correct path relative to project root
-    pathex=['/Users/juanloya/Documents/qrew'],
+    ['qrew/main.py'],
+    pathex=['/Users/juanloya/Documents/qrew', '/Users/juanloya/Documents/qrew/qrew'],
     binaries=[],
-    datas=[('qrew/assets/*', 'assets'), ('qrew/settings.json', '.'), ('README.md', '.'), ('LICENSE', '.')],
-    hiddenimports=['requests', 'flask', 'numpy', 'pandas', 'scipy', 'vlc', 'colour', 'PyQt5.sip'],
+    datas=[('/Users/juanloya/Documents/qrew/qrew/assets', 'assets'), ('/Users/juanloya/Documents/qrew/README.md', '.'), ('/Users/juanloya/Documents/qrew/LICENSE', '.'), ('/Users/juanloya/Documents/qrew/qrew/mic_pos.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_measurement_metrics.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_message_handlers.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew3.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_vlc_helper.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew2.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/__init__.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_workers.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_dialogs.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_settings.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/mic_widget.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_styles.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/coordinate_picker.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_resources.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew4.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_filedialog.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_vlc_helper_v2.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_button.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_common.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_v1.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/main.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_gridwidget.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/__main__.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_workers_v2.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_micwidget_icons.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_messagebox.py', 'qrew'), ('/Users/juanloya/Documents/qrew/qrew/Qrew_api_helper.py', 'qrew')],
+    hiddenimports=['qrew', 'qrew.Qrew', 'qrew.Qrew_api_helper', 'qrew.Qrew_message_handlers', 'qrew.Qrew_common', 'qrew.Qrew_styles', 'qrew.Qrew_button', 'qrew.Qrew_dialogs', 'qrew.Qrew_workers_v2', 'qrew.Qrew_settings', 'qrew.Qrew_measurement_metrics', 'qrew.Qrew_micwidget_icons', 'qrew.Qrew_vlc_helper_v2', 'qrew.Qrew_messagebox', 'qrew.Qrew_resources', 'requests', 'flask', 'numpy', 'pandas', 'gevent', 'vlc', 'colour', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets'],
+    excludes=['tkinter', 'matplotlib', 'IPython', 'PyQt5.QtQuick', 'PyQt5.QtQml', 'PyQt5.QtWebSockets', 'PyQt5.QtDBus', 'PyQt5.QtPrintSupport'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -29,14 +36,14 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,
+    upx=False,  # Disable UPX to avoid compatibility issues
+    console=False,  # Set to True for debugging
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='/Users/juanloya/Documents/qrew/assets/icons/qrew.png',
+    icon='/Users/juanloya/Documents/qrew/assets/icons/Qrew.icns' if '/Users/juanloya/Documents/qrew/assets/icons/Qrew.icns' else None,
 )
 
 coll = COLLECT(
@@ -45,9 +52,14 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='Qrew',
 )
-
-app = BUNDLE(coll, name="Qrew.app", icon="/Users/juanloya/Documents/qrew/assets/icons/qrew.png", bundle_identifier="com.yourcompany.qrew")
+app = BUNDLE(
+    coll,
+    name='Qrew.app',
+    icon='/Users/juanloya/Documents/qrew/assets/icons/Qrew.icns' if '/Users/juanloya/Documents/qrew/assets/icons/Qrew.icns' else None,
+    bundle_identifier='com.docdude.Qrew',
+    info_plist={'CFBundleName': 'Qrew', 'CFBundleDisplayName': 'Qrew', 'CFBundleIdentifier': 'com.docdude.Qrew', 'CFBundleVersion': '1.0.0', 'CFBundleShortVersionString': '1.0.0', 'CFBundlePackageType': 'APPL', 'CFBundleSignature': '????', 'CFBundleExecutable': 'Qrew', 'CFBundleIconFile': 'Qrew.icns', 'CFBundleIconName': 'Qrew', 'NSHumanReadableCopyright': '© 2025 Your Name', 'NSHighResolutionCapable': True, 'LSMinimumSystemVersion': '10.15', 'NSMainNibFile': 'MainMenu', 'NSPrincipalClass': 'NSApplication'}
+)

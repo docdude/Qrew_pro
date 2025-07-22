@@ -10,7 +10,7 @@ APP_NAME = "Qrew"
 APP_VERSION = "1.0.0"
 APP_DESCRIPTION = "Automated Loudspeaker Measurement System"
 APP_AUTHOR = "Your Name"
-APP_URL = "https://github.com/docdude/qrew"
+APP_URL = "https://github.com/docdude/Qrew_pro"
 BUNDLE_IDENTIFIER = "com.docdude.Qrew"
 
 # Fix: Use project root instead of build_scripts directory
@@ -26,7 +26,7 @@ IS_WINDOWS = PLATFORM == "windows"
 IS_LINUX = PLATFORM == "linux"
 
 ICON_PATHS = {
-    "macos": ICONS_DIR / "Qrew.icns",
+    "darwin": ICONS_DIR / "Qrew.icns",
     "windows": ICONS_DIR / "Qrew_desktop.ico",
     "linux": ICONS_DIR / "Qrew_desktop_500x500.png",
 }
@@ -42,9 +42,8 @@ MACOS_BUNDLE_INFO = {
     "CFBundleSignature": "????",
     "CFBundleExecutable": APP_NAME,
     "CFBundleIconFile": "Qrew.icns",
-    "NSHumanReadableCopyright": (
-        f"© {datetime.datetime.now().year} {APP_AUTHOR}"
-    ),
+    "CFBundleIconName": "Qrew",  # Add this line
+    "NSHumanReadableCopyright": (f"© {datetime.datetime.now().year} {APP_AUTHOR}"),
     "NSHighResolutionCapable": True,
     "LSMinimumSystemVersion": "10.15",  # Minimum macOS version
     "NSMainNibFile": "MainMenu",
@@ -73,9 +72,9 @@ DATA_FILES = [
 HIDDEN_IMPORTS = [
     "requests",
     "flask",
+    "gevent",
     "numpy",
     "pandas",
-    "scipy",
     "vlc",
     "colour",
     "PyQt5.sip",

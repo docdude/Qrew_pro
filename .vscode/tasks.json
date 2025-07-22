@@ -12,6 +12,9 @@
                 "-e",
                 ".[dev]"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -29,6 +32,9 @@
                 "build_scripts/build.py",
                 "--deps"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -46,6 +52,9 @@
                 "build_scripts/build.py",
                 "--clean"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -62,6 +71,9 @@
             "args": [
                 "build_scripts/build.py"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -79,6 +91,9 @@
                 "build_scripts/build.py",
                 "--platform"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -97,6 +112,9 @@
                 "--clean",
                 "--platform"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -117,6 +135,9 @@
                 "-m",
                 "qrew"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "test",
             "presentation": {
                 "echo": true,
@@ -133,6 +154,9 @@
             "args": [
                 "run_dev.py"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "test",
             "presentation": {
                 "echo": true,
@@ -152,6 +176,9 @@
                 "tests/",
                 "-v"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "test",
             "presentation": {
                 "echo": true,
@@ -171,6 +198,9 @@
                 "qrew/",
                 "tests/"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -189,6 +219,9 @@
                 "flake8",
                 "qrew/"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": "test",
             "presentation": {
                 "echo": true,
