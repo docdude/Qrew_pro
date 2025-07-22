@@ -261,7 +261,7 @@ def verify_qrew_modules():
         "qrew.Qrew_styles",
         "qrew.Qrew_button",
         "qrew.Qrew_dialogs",
-        "qrew.Qrew_workers",
+        "qrew.Qrew_workers_v2",
         "qrew.Qrew_settings",
         "qrew.Qrew_measurement_metrics",
         "qrew.Qrew_micwidget_icons",
