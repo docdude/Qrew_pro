@@ -473,7 +473,50 @@ def generate_pyinstaller_spec():
         "unittest",
         "pdb",
         "pydoc",
+        "doctest",
+        "xml.etree",
+        "xml.parsers",
+        "email",
+        "http",
+        "urllib",
+        "html",
+        "distutils",
+        "setuptools",
+        "pkg_resources",
+        "wheel",
+        "pip",
     ]
+
+    # Add Linux-specific excludes
+    if IS_LINUX:
+        excludes_list.extend(
+            [
+                "PyQt5.QtMultimedia",
+                "PyQt5.QtMultimediaWidgets",
+                "PyQt5.QtOpenGL",
+                "PyQt5.QtPositioning",
+                "PyQt5.QtQuickWidgets",
+                "PyQt5.QtSensors",
+                "PyQt5.QtSerialPort",
+                "PyQt5.QtSql",
+                "PyQt5.QtTest",
+                "PyQt5.QtWebKit",
+                "PyQt5.QtWebKitWidgets",
+                "PyQt5.QtXml",
+                "PyQt5.QtXmlPatterns",
+                "pandas.plotting",
+                "pandas.io.excel",
+                "pandas.io.json",
+                "pandas.io.html",
+                "scipy.ndimage",
+                "scipy.optimize",
+                "scipy.integrate",
+                "scipy.interpolate",
+                "numpy.distutils",
+                "numpy.f2py",
+                "numpy.testing",
+            ]
+        )
 
     # Convert icon path for spec file
     icon_path_str = ""
@@ -492,6 +535,10 @@ app = BUNDLE(
     bundle_identifier='{BUNDLE_IDENTIFIER}',
     info_plist={bundle_info}
 )"""
+
+    # Enable stripping and compression for Linux
+    strip_option = "True" if IS_LINUX else "False"
+    upx_option = "True" if IS_LINUX else "False"  # Enable UPX for Linux
 
     return f"""# -*- mode: python ; coding: utf-8 -*-
 
@@ -531,8 +578,8 @@ exe = EXE(
     name='{APP_NAME}',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,  # Disable UPX to avoid compatibility issues
+    strip={strip_option},  # Strip debug symbols on Linux
+    upx={upx_option},     # Enable UPX compression on Linux
     console=False,  # Set to True for debugging
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -547,8 +594,8 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=False,
-    upx=False,
+    strip={strip_option},  # Strip binaries
+    upx={upx_option},      # Compress binaries
     upx_exclude=[],
     name='{APP_NAME}',
 ){bundle_section}

@@ -40,6 +40,74 @@ def run_command(cmd, cwd=None):
         return False
 
 
+def optimize_linux_build():
+    """Remove unnecessary files and optimize the Linux build"""
+    print("Optimizing Linux build...")
+    app_dir = DIST_DIR / APP_NAME
+    if not app_dir.exists():
+        return False
+
+    # Files/directories to remove
+    cleanup_patterns = [
+        "lib*/libQt5Quick*",
+        "lib*/libQt5Qml*",
+        "lib*/libQt5WebKit*",
+        "lib*/libQt5Test*",
+        "lib*/libQt5Multimedia*",
+        "lib*/libQt5OpenGL*",
+        "lib*/libQt5Sql*",
+        "lib*/libQt5Designer*",
+        "share/qt5/translations",
+        "share/doc",
+        "share/man",
+        "include",
+        "*.debug",
+        "*.a",  # Static libraries
+        "*.la",  # Libtool files
+    ]
+
+    removed_size = 0
+    for pattern in cleanup_patterns:
+        for path in app_dir.rglob(pattern):
+            try:
+                if path.is_file():
+                    size = path.stat().st_size
+                    path.unlink()
+                    removed_size += size
+                elif path.is_dir():
+                    dir_size = (
+                        get_directory_size(path) * 1024 * 1024
+                    )  # Convert back to bytes
+                    shutil.rmtree(path)
+                    removed_size += dir_size
+            except Exception as e:
+                print(f"WARNING: Could not remove {path}: {e}")
+
+    print(f"SUCCESS: Removed {removed_size / (1024*1024):.1f} MB of unnecessary files")
+
+    # Strip remaining binaries
+    try:
+        for binary in app_dir.rglob("*"):
+            if (
+                binary.is_file()
+                and binary.suffix in [".so", ""]
+                and not binary.name.endswith(".py")
+            ):
+                try:
+                    subprocess.run(
+                        ["strip", "--strip-unneeded", str(binary)],
+                        check=False,
+                        capture_output=True,
+                    )
+                except:
+                    pass
+        print("SUCCESS: Stripped debug symbols from binaries")
+    except Exception as e:
+        print(f"WARNING: Could not strip binaries: {e}")
+
+    return True
+
+
 def build_linux_installer():
     """Build Linux packages (.deb and .rpm)"""
     print("Building Linux packages...")
@@ -48,6 +116,9 @@ def build_linux_installer():
     if not app_dir.exists():
         print("ERROR: Linux app directory not found. Run PyInstaller first.")
         return False
+
+    # Optimize the build first
+    optimize_linux_build()
 
     success = True
 
