@@ -397,13 +397,18 @@ def generate_pyinstaller_spec():
     """Generate PyInstaller spec file with proper configuration"""
     icon_path = get_icon_for_platform()
 
+    # Convert paths to strings for proper formatting
+    root_dir_str = str(ROOT_DIR).replace("\\", "/")
+    qrew_dir_str = str(ROOT_DIR / "qrew").replace("\\", "/")
+
     # Data files - only include files that exist
     data_files = []
 
     # Add qrew package assets
     qrew_assets = ROOT_DIR / "qrew" / "assets"
     if qrew_assets.exists():
-        data_files.append(f"('{qrew_assets}', 'assets')")
+        assets_str = str(qrew_assets).replace("\\", "/")
+        data_files.append(f"(r'{assets_str}', 'assets')")
 
     # Add all qrew python files individually
     qrew_py_files = []
@@ -411,12 +416,14 @@ def generate_pyinstaller_spec():
     if qrew_dir.exists():
         for py_file in qrew_dir.glob("*.py"):
             if py_file.name != "__pycache__":
-                qrew_py_files.append(f"('{py_file}', 'qrew')")
+                py_file_str = str(py_file).replace("\\", "/")
+                qrew_py_files.append(f"(r'{py_file_str}', 'qrew')")
 
     # Add documentation files
     for file_path in [ROOT_DIR / "README.md", ROOT_DIR / "LICENSE"]:
         if file_path.exists():
-            data_files.append(f"('{file_path}', '.')")
+            file_str = str(file_path).replace("\\", "/")
+            data_files.append(f"(r'{file_str}', '.')")
 
     data_files_str = "[" + ", ".join(data_files + qrew_py_files) + "]"
 
@@ -468,6 +475,11 @@ def generate_pyinstaller_spec():
         "pydoc",
     ]
 
+    # Convert icon path for spec file
+    icon_path_str = ""
+    if icon_path:
+        icon_path_str = str(icon_path).replace("\\", "/")
+
     # macOS bundle section
     bundle_section = ""
     if IS_MACOS:
@@ -476,7 +488,7 @@ def generate_pyinstaller_spec():
 app = BUNDLE(
     coll,
     name='{APP_NAME}.app',
-    icon='{icon_path}' if '{icon_path}' else None,
+    icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
     bundle_identifier='{BUNDLE_IDENTIFIER}',
     info_plist={bundle_info}
 )"""
@@ -487,14 +499,15 @@ import sys
 from pathlib import Path
 
 # Ensure qrew package can be found
-sys.path.insert(0, str(Path.cwd() / 'qrew'))
-sys.path.insert(0, str(Path.cwd()))
+sys.path.insert(0, r'{root_dir_str}/qrew')
+sys.path.insert(0, r'{root_dir_str}')
 
 block_cipher = None
 
+
 a = Analysis(
-    ['qrew/main.py'],
-    pathex=['{ROOT_DIR}', '{ROOT_DIR / "qrew"}'],
+    [r'{root_dir_str}/qrew/main.py'],
+    pathex=[r'{root_dir_str}', r'{qrew_dir_str}'],
     binaries=[],
     datas={data_files_str},
     hiddenimports={hidden_imports},
@@ -526,7 +539,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='{icon_path}' if '{icon_path}' else None,
+    icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
 )
 
 coll = COLLECT(

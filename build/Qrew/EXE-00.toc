@@ -58,7 +58,7 @@
  [],
  False,
  False,
- 1753195166,
+ 1753197017,
  [('runw',
    '/Users/juanloya/Documents/qrew/.venv/lib/python3.13/site-packages/PyInstaller/bootloader/Darwin-64bit/runw',
    'EXECUTABLE')],
