@@ -50,7 +50,6 @@ def optimize_linux_build():
     # Files/directories to remove
     cleanup_patterns = [
         "lib*/libQt5Quick*",
-        "lib*/libQt5Qml*",
         "lib*/libQt5WebKit*",
         "lib*/libQt5Test*",
         "lib*/libQt5Multimedia*",

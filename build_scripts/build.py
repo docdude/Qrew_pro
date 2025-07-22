@@ -465,6 +465,7 @@ def generate_pyinstaller_spec():
         "matplotlib",
         "IPython",
         "PyQt5.QtQuick",
+        "PyQt5.QtQml",
         "PyQt5.QtWebSockets",
         "PyQt5.QtDBus",
         "PyQt5.QtPrintSupport",

@@ -16,7 +16,7 @@ a = Analysis(
     binaries=[],
     datas=[(r'/Users/juanloya/Documents/qrew/qrew/assets', 'assets'), (r'/Users/juanloya/Documents/qrew/README.md', '.'), (r'/Users/juanloya/Documents/qrew/LICENSE', '.'), (r'/Users/juanloya/Documents/qrew/qrew/mic_pos.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_measurement_metrics.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_message_handlers.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew3.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_vlc_helper.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew2.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/__init__.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_workers.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_dialogs.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_settings.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/mic_widget.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_styles.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/coordinate_picker.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_resources.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew4.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_filedialog.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_vlc_helper_v2.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_button.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_common.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_v1.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/main.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_gridwidget.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/__main__.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_workers_v2.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_micwidget_icons.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_messagebox.py', 'qrew'), (r'/Users/juanloya/Documents/qrew/qrew/Qrew_api_helper.py', 'qrew')],
     hiddenimports=['qrew', 'qrew.Qrew', 'qrew.Qrew_api_helper', 'qrew.Qrew_message_handlers', 'qrew.Qrew_common', 'qrew.Qrew_styles', 'qrew.Qrew_button', 'qrew.Qrew_dialogs', 'qrew.Qrew_workers_v2', 'qrew.Qrew_settings', 'qrew.Qrew_measurement_metrics', 'qrew.Qrew_micwidget_icons', 'qrew.Qrew_vlc_helper_v2', 'qrew.Qrew_messagebox', 'qrew.Qrew_resources', 'requests', 'flask', 'gevent', 'numpy', 'pandas', 'vlc', 'colour', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets'],
-    excludes=['tkinter', 'matplotlib', 'IPython', 'PyQt5.QtQuick', 'PyQt5.QtQml', 'PyQt5.QtWebSockets', 'PyQt5.QtDBus', 'PyQt5.QtPrintSupport', 'test', 'unittest', 'pdb', 'pydoc'],
+    excludes=['tkinter', 'matplotlib', 'IPython', 'PyQt5.QtQuick', 'PyQt5.QtQml', 'PyQt5.QtWebSockets', 'PyQt5.QtDBus', 'PyQt5.QtPrintSupport', 'test', 'unittest', 'pdb', 'pydoc', 'doctest', 'xml.etree', 'xml.parsers', 'email', 'http', 'urllib', 'html', 'distutils', 'setuptools', 'pkg_resources', 'wheel', 'pip'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -36,8 +36,8 @@ exe = EXE(
     name='Qrew',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,  # Disable UPX to avoid compatibility issues
+    strip=False,  # Strip debug symbols on Linux
+    upx=False,     # Enable UPX compression on Linux
     console=False,  # Set to True for debugging
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -52,8 +52,8 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=False,
-    upx=False,
+    strip=False,  # Strip binaries
+    upx=False,      # Compress binaries
     upx_exclude=[],
     name='Qrew',
 )

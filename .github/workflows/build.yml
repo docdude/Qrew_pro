@@ -73,11 +73,23 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements-build.txt
-        
+
+    - name: Import Code Signing Certificate
+      if: ${{ secrets.CERT_P12_BASE64 }}
+      uses: Apple-Actions/import-codesign-certs@v1
+      with:
+        p12-file-base64: ${{ secrets.CERT_P12_BASE64 }}
+        p12-password: ${{ secrets.CERT_PASSWORD }}
+
     - name: Build macOS installer
       run: |
         cd ${{ github.workspace }}
         python build_scripts/build.py --clean --platform
+      env:
+        CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     - name: Check macOS build output  
       run: |
