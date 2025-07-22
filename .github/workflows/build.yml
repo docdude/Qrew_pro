@@ -27,7 +27,7 @@ jobs:
       run: choco install nsis
       
     - name: Build Windows installer
-      run: python build.py --clean --platform
+      run: python build_scripts/build.py --clean --platform
       
     - name: Upload Windows installer
       uses: actions/upload-artifact@v4
@@ -51,7 +51,7 @@ jobs:
         pip install -e ".[dev]"
         
     - name: Build macOS installer
-      run: python build.py --clean --platform
+      run: python build_scripts/build.py --clean --platform
       
     - name: Upload macOS installer
       uses: actions/upload-artifact@v4
@@ -80,7 +80,7 @@ jobs:
         pip install -e ".[dev]"
         
     - name: Build Linux packages
-      run: python build.py --clean --platform
+      run: python build_scripts/build.py --clean --platform
       
     - name: Upload Linux packages
       uses: actions/upload-artifact@v4
