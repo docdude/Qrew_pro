@@ -20,10 +20,15 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
-venv/
+# Environments
+.env
+.envrc
+.venv
 env/
+venv/
 ENV/
+env.bak/
+venv.bak/
 
 # IDE
 .vscode/settings.json.user
