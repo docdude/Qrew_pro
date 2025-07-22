@@ -122,22 +122,16 @@ def build_linux_installer():
         print("WARNING: .deb package creation failed")
         success = False
 
-    # Build RPM
+    # Build .rpm package - only try if rpmbuild is available
     try:
         subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
-        if build_rpm_with_rpmbuild():
+        if build_rpm_package():
             print("SUCCESS: .rpm package created")
         else:
             print("WARNING: .rpm package creation failed")
-    except FileNotFoundError:
-        try:
-            subprocess.run(["which", "alien"], check=True, capture_output=True)
-            if build_rpm_with_alien():
-                print("SUCCESS: .rpm package created via alien")
-            else:
-                print("INFO: .rpm creation via alien failed")
-        except:
-            print("INFO: Neither rpmbuild nor alien available, skipping .rpm creation")
+            # Don't fail overall build
+    except:
+        print("INFO: rpmbuild not available, skipping .rpm creation")
 
     # Create tarball
     if create_tarball():
