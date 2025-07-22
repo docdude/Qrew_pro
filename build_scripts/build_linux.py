@@ -47,22 +47,18 @@ def optimize_linux_build():
     if not app_dir.exists():
         return False
 
-    # Files/directories to remove
+    # Only remove truly unnecessary files
     cleanup_patterns = [
-        "lib*/libQt5Quick*",
-        "lib*/libQt5WebKit*",
-        "lib*/libQt5Test*",
-        "lib*/libQt5Multimedia*",
-        "lib*/libQt5OpenGL*",
-        "lib*/libQt5Sql*",
-        "lib*/libQt5Designer*",
-        "share/qt5/translations",
         "share/doc",
         "share/man",
         "include",
         "*.debug",
         "*.a",  # Static libraries
         "*.la",  # Libtool files
+        "**/__pycache__",
+        "**/*.pyc",
+        "lib*/libQt5Test*",  # Test libraries are safe to remove
+        "lib*/libQt5Designer*",  # Designer libraries not needed
     ]
 
     removed_size = 0
@@ -74,9 +70,11 @@ def optimize_linux_build():
                     path.unlink()
                     removed_size += size
                 elif path.is_dir():
-                    dir_size = (
-                        get_directory_size(path) * 1024 * 1024
-                    )  # Convert back to bytes
+                    import os
+
+                    dir_size = sum(
+                        f.stat().st_size for f in path.rglob("*") if f.is_file()
+                    )
                     shutil.rmtree(path)
                     removed_size += dir_size
             except Exception as e:
@@ -84,14 +82,15 @@ def optimize_linux_build():
 
     print(f"SUCCESS: Removed {removed_size / (1024*1024):.1f} MB of unnecessary files")
 
-    # Strip remaining binaries
+    # Strip binaries (this is safe)
     try:
         for binary in app_dir.rglob("*"):
             if (
                 binary.is_file()
-                and binary.suffix in [".so", ""]
+                and binary.suffix in [".so"]
                 and not binary.name.endswith(".py")
-            ):
+                and binary.exists()
+            ):  # Check exists before stripping
                 try:
                     subprocess.run(
                         ["strip", "--strip-unneeded", str(binary)],
@@ -108,42 +107,47 @@ def optimize_linux_build():
 
 
 def build_linux_installer():
-    """Build Linux packages (.deb and .rpm)"""
     print("Building Linux packages...")
-
     app_dir = DIST_DIR / APP_NAME
     if not app_dir.exists():
         print("ERROR: Linux app directory not found. Run PyInstaller first.")
         return False
 
-    # Optimize the build first
-    optimize_linux_build()
-
     success = True
 
-    # Build .deb package
+    # Build packages BEFORE optimizing
     if build_deb_package():
         print("SUCCESS: .deb package created")
     else:
         print("WARNING: .deb package creation failed")
         success = False
 
-    # Build .rpm package - only try if rpmbuild is available
+    # Build RPM
     try:
         subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
-        if build_rpm_package():
+        if build_rpm_with_rpmbuild():
             print("SUCCESS: .rpm package created")
         else:
             print("WARNING: .rpm package creation failed")
-            # Don't fail overall build
-    except:
-        print("INFO: rpmbuild not available, skipping .rpm creation")
+    except FileNotFoundError:
+        try:
+            subprocess.run(["which", "alien"], check=True, capture_output=True)
+            if build_rpm_with_alien():
+                print("SUCCESS: .rpm package created via alien")
+            else:
+                print("INFO: .rpm creation via alien failed")
+        except:
+            print("INFO: Neither rpmbuild nor alien available, skipping .rpm creation")
 
-    # Always create a tar.gz as fallback
+    # Create tarball
     if create_tarball():
         print("SUCCESS: tar.gz archive created")
     else:
         print("WARNING: tar.gz creation failed")
+
+    # NOW optimize after all packages are created
+    if optimize_linux_build():
+        print("SUCCESS: Linux build optimized")
 
     return success
 
@@ -245,16 +249,13 @@ def build_rpm_with_rpmbuild():
 
 
 def create_deb_structure(pkg_dir):
-    """Create .deb package structure"""
     print("Creating .deb structure...")
-
     pkg_dir.mkdir(parents=True, exist_ok=True)
 
-    # DEBIAN control directory
+    # Create DEBIAN control files
     debian_dir = pkg_dir / "DEBIAN"
     debian_dir.mkdir(exist_ok=True)
 
-    # Control file
     control_content = f"""Package: {APP_NAME.lower()}
 Version: {APP_VERSION}
 Section: sound
@@ -266,23 +267,50 @@ Description: {APP_DESCRIPTION}
  Automated loudspeaker measurement system using REW API.
  Provides advanced measurement and analysis capabilities.
 """
-
     with open(debian_dir / "control", "w") as f:
         f.write(control_content)
 
-    # Application files
+    # Copy application files with error handling
     app_install_dir = pkg_dir / "opt" / APP_NAME
     app_install_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy application
     app_source = DIST_DIR / APP_NAME
-    for item in app_source.iterdir():
-        if item.is_file():
-            shutil.copy2(item, app_install_dir)
-        elif item.is_dir():
-            shutil.copytree(item, app_install_dir / item.name, dirs_exist_ok=True)
 
-    # Copy icon if it exists
+    def safe_copy(src, dst):
+        """Copy files/directories with error handling"""
+        try:
+            if src.is_file():
+                shutil.copy2(src, dst)
+                return True
+            elif src.is_dir():
+                shutil.copytree(
+                    src, dst, dirs_exist_ok=True, ignore_dangling_symlinks=True
+                )
+                return True
+        except FileNotFoundError as e:
+            print(f"WARNING: File not found during copy: {src} -> {e}")
+            return False
+        except Exception as e:
+            print(f"WARNING: Could not copy {src}: {e}")
+            return False
+        return False
+
+    # Copy all files from the app directory
+    copied_count = 0
+    failed_count = 0
+
+    for item in app_source.iterdir():
+        if item.name.startswith("."):
+            continue  # Skip hidden files
+
+        target_path = app_install_dir / item.name
+        if safe_copy(item, target_path):
+            copied_count += 1
+        else:
+            failed_count += 1
+
+    print(f"INFO: Copied {copied_count} items, {failed_count} failed")
+
+    # Add icon file
     icon_src = None
     for icon_name in ["qrew.png", "Qrew.png", "qrew_desktop_500x500.png"]:
         icon_path = ICONS_DIR / icon_name
@@ -293,7 +321,7 @@ Description: {APP_DESCRIPTION}
     if icon_src:
         shutil.copy2(icon_src, app_install_dir / "icon.png")
 
-    # Desktop file
+    # Create desktop entry
     desktop_dir = pkg_dir / "usr" / "share" / "applications"
     desktop_dir.mkdir(parents=True, exist_ok=True)
 
@@ -306,11 +334,10 @@ Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Engineering;
 """
-
     with open(desktop_dir / f"{APP_NAME.lower()}.desktop", "w") as f:
         f.write(desktop_content)
 
-    # Launcher script
+    # Create launcher script
     bin_dir = pkg_dir / "usr" / "local" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -319,7 +346,6 @@ export LD_LIBRARY_PATH=/opt/{APP_NAME}:$LD_LIBRARY_PATH
 cd /opt/{APP_NAME}
 ./{APP_NAME} "$@"
 """
-
     launcher_file = bin_dir / APP_NAME.lower()
     with open(launcher_file, "w") as f:
         f.write(launcher_content)
