@@ -102,30 +102,67 @@ def build_deb_package():
 
 
 def build_rpm_package():
-    """Build .rpm package"""
     print("Building .rpm package...")
+    try:
+        subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
+        return build_rpm_with_rpmbuild()
+    except:
+        print("INFO: rpmbuild not available, trying alien conversion...")
+        return build_rpm_with_alien()
 
+
+def build_rpm_with_alien():
+    """Convert .deb to .rpm using alien"""
+    deb_file = None
+    for deb_path in DIST_DIR.glob("*.deb"):
+        deb_file = deb_path
+        break
+
+    if not deb_file:
+        print("ERROR: No .deb file found for RPM conversion")
+        return False
+
+    try:
+        subprocess.run(["which", "alien"], check=True, capture_output=True)
+    except:
+        print("ERROR: alien not installed, cannot convert .deb to .rpm")
+        return False
+
+    try:
+        cmd = ["alien", "--to-rpm", "--scripts", str(deb_file)]
+        result = run_command(cmd, cwd=DIST_DIR)
+        if result:
+            # Find the generated RPM
+            for rpm_file in DIST_DIR.glob("*.rpm"):
+                target = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.rpm"
+                if rpm_file != target:
+                    rpm_file.rename(target)
+                print(f"SUCCESS: RPM created via alien: {target}")
+                return True
+        return False
+    except Exception as e:
+        print(f"ERROR: alien conversion failed: {e}")
+        return False
+
+
+def build_rpm_with_rpmbuild():
+    """Original rpmbuild method"""
+    print("Building .rpm package with rpmbuild...")
     rpm_build = BUILD_DIR / "rpm_build"
-
-    # Create RPM directory structure
     for subdir in ["SPECS", "SOURCES", "BUILD", "RPMS", "SRPMS"]:
         (rpm_build / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Create spec file
     spec_content = create_rpm_spec()
     spec_file = rpm_build / "SPECS" / f"{APP_NAME.lower()}.spec"
-
     with open(spec_file, "w") as f:
         f.write(spec_content)
 
-    # Create source tarball
     if not create_rpm_sources(rpm_build):
         return False
 
     try:
         cmd = ["rpmbuild", "--define", f"_topdir {rpm_build}", "-ba", str(spec_file)]
         if run_command(cmd, cwd=ROOT_DIR):
-            # Find and copy the RPM
             for rpm_file in (rpm_build / "RPMS").rglob("*.rpm"):
                 target = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.rpm"
                 shutil.copy2(rpm_file, target)
