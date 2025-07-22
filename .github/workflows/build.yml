@@ -38,11 +38,20 @@ jobs:
         cd ${{ github.workspace }}
         python build_scripts/build.py --clean --platform
       
+    - name: Check Windows build output
+      run: |
+        echo "Checking dist directory:"
+        if (Test-Path "dist") { Get-ChildItem -Recurse dist } else { echo "No dist directory found" }
+        
     - name: Upload Windows installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
+      if: always()  # Upload even if build failed
       with:
         name: windows-installer
-        path: dist/*.exe
+        path: |
+          dist/*.exe
+          dist/*.zip
+        if-no-files-found: warn
 
   build-macos:
     runs-on: macos-latest
@@ -69,12 +78,21 @@ jobs:
       run: |
         cd ${{ github.workspace }}
         python build_scripts/build.py --clean --platform
-      
+
+    - name: Check macOS build output  
+      run: |
+        echo "Checking dist directory:"
+        ls -la dist/
+
     - name: Upload macOS installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: macos-installer
-        path: dist/*.dmg
+        path: |
+          dist/*.dmg
+          dist/*.app.zip
+        if-no-files-found: warn
+
 
   build-linux:
     runs-on: ubuntu-latest
@@ -117,30 +135,84 @@ jobs:
         cd ${{ github.workspace }}
         export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
         python build_scripts/build.py --clean --platform
-      
+
+    - name: Check Linux build output
+      run: |
+        echo "Checking dist directory:"
+        ls -la dist/
+
     - name: Upload Linux packages
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: linux-packages
-        path: dist/*.deb dist/*.rpm dist/*tar.gq
+        path: |
+          dist/*.deb
+          dist/*.rpm  
+          dist/*.tar.gz
+          dist/*.AppImage
+        if-no-files-found: warn
 
   release:
     needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     
+    # Add explicit permissions
+    permissions:
+      contents: write
+      
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       
+    - name: List downloaded artifacts
+      run: |
+        echo "Downloaded artifacts:"
+        find . -type f -name "*" | head -20
+        
+    - name: Prepare release files
+      run: |
+        mkdir -p release-files
+        # Copy all artifacts to release-files directory
+        find . -name "*.exe" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.dmg" -exec cp {} release-files/ \; 2>/dev/null || true  
+        find . -name "*.deb" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.rpm" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.tar.gz" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.zip" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.AppImage" -exec cp {} release-files/ \; 2>/dev/null || true
+        
+        echo "Release files prepared:"
+        ls -la release-files/
+        
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          windows-installer/*
-          macos-installer/*
-          linux-packages/*
+        files: release-files/*
         draft: false
         prerelease: false
+        fail_on_unmatched_files: false
+        body: |
+          # Qrew v${{ github.ref_name }}
+          
+          Automated loudspeaker measurement system using REW API.
+          
+          ## Downloads
+          
+          - **Windows**: `Qrew-*-windows-installer.exe` or `Qrew-*-windows.zip`
+          - **macOS**: `Qrew-*-macos.dmg`
+          - **Linux**: `qrew-*-linux.deb`, `qrew-*-linux.rpm`, or `qrew-*-linux.tar.gz`
+          
+          ## Requirements
+          
+          - VLC Media Player must be installed
+          - REW (Room EQ Wizard) for measurements
+          
+          ## Installation
+          
+          1. Download the appropriate package for your platform
+          2. Install VLC Media Player if not already installed
+          3. Install/extract Qrew
+          4. Run Qrew and configure REW API settings
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
