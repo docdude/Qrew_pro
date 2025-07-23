@@ -1,5 +1,6 @@
 # Qrew_vlc_helper_v2.py – non-blocking VLC wrapper
 import os
+import sys
 import platform
 import subprocess
 import threading
@@ -11,19 +12,27 @@ import signal
 from pathlib import Path
 from typing import Callable, Optional
 
+# PyInstaller frozen environment handling
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    print("Running from PyInstaller bundle - using bundled VLC libraries")
+    # Environment variables should be set by our runtime hook
+    if os.environ.get("VLC_PLUGIN_PATH"):
+        print(f"VLC_PLUGIN_PATH: {os.environ.get('VLC_PLUGIN_PATH')}")
+
 try:
     from . import Qrew_common
     from . import Qrew_settings as qs
-except: 
+except:
     import Qrew_common
     import Qrew_settings as qs
 
 try:
-  #if platform.system() == "Windows":
-        #os.add_dll_directory(r'C:\Users\centralmd\Downloads\vlc-3.0.21-win64\vlc-3.0.21')
-    import vlc          # python-vlc
+    # if platform.system() == "Windows":
+    # os.add_dll_directory(r'C:\Users\centralmd\Downloads\vlc-3.0.21-win64\vlc-3.0.21')
+    import vlc  # python-vlc
 except ImportError:
-    vlc = None          # optional
+    vlc = None  # optional
+
 
 # ----------------------------------------------------------------------
 class VLCPlayer:
@@ -31,21 +40,23 @@ class VLCPlayer:
     Play a media file either with python-vlc (libvlc) or by launching the
     VLC executable.  Non-blocking; calls *on_finished* when playback ends.
     """
+
     def __init__(self):
-        self._thread  = None
+        self._thread = None
         self._playing = False
-        self._player = None     # libvlc player
-        self._instance = None   # libvlc instance
-        self._process = None    # subprocess
+        self._player = None  # libvlc player
+        self._instance = None  # libvlc instance
+        self._process = None  # subprocess
         self._system = platform.system()
 
-
     # -------------------- public entry point --------------------------
-    def play(self,
-             path: str,
-             show_gui: bool            = True,
-             backend: str              = "auto",   # "libvlc" | "subprocess" | "auto"
-             on_finished: Optional[Callable[[], None]] = None):
+    def play(
+        self,
+        path: str,
+        show_gui: bool = True,
+        backend: str = "auto",  # "libvlc" | "subprocess" | "auto"
+        on_finished: Optional[Callable[[], None]] = None,
+    ):
         """
         Start playback and return immediately.
         *on_finished* is called in a background thread when playback ends.
@@ -70,8 +81,8 @@ class VLCPlayer:
     # -------------------- libvlc path --------------------------------
     def _play_libvlc(self, path, show_gui, on_finished):
         intf_flag = "" if show_gui else "--intf=dummy"
-        self._instance  = vlc.Instance("--play-and-exit", intf_flag)
-        self._player    = self._instance.media_player_new()
+        self._instance = vlc.Instance("--play-and-exit", intf_flag)
+        self._player = self._instance.media_player_new()
         self._player.set_media(self._instance.media_new(Path(path).as_posix()))
         self._player.audio_set_volume(100)
         # Finish queue + callback
@@ -87,11 +98,11 @@ class VLCPlayer:
 
         # watchdog thread waits for queue then fires callback
         def _watch():
-            done_q.get()               # blocks until signal
+            done_q.get()  # blocks until signal
             self._playing = False
             if on_finished:
                 on_finished()
-           # self._player.release()
+            # self._player.release()
             self.stop_and_exit()
 
         threading.Thread(target=_watch, daemon=True).start()
@@ -108,7 +119,7 @@ class VLCPlayer:
         else:
             cmd = [vlc_path, "--play-and-exit", "--volume-step=256", path]
             if not show_gui:
-                cmd += ["--intf", "dummy"]           
+                cmd += ["--intf", "dummy"]
 
         # Ensure process group for better termination on Unix-like systems
         if self._system != "Windows":
@@ -126,12 +137,12 @@ class VLCPlayer:
             self.stop_and_exit()
 
         threading.Thread(target=_watch, daemon=True).start()
-    
+
     def stop_and_exit(self):
         try:
             proc = self._process  # local copy
 
-            if self._player and hasattr(self._player, 'stop'):
+            if self._player and hasattr(self._player, "stop"):
                 try:
                     self._player.stop()
                 except Exception as e:
@@ -155,8 +166,10 @@ class VLCPlayer:
                 try:
                     if proc.poll() is None:
                         try:
-                            if self._system == 'Windows':
-                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)])
+                            if self._system == "Windows":
+                                subprocess.call(
+                                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)]
+                                )
                             else:
                                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                                 time.sleep(0.1)
@@ -177,13 +190,12 @@ class VLCPlayer:
         except Exception as e:
             print(f"Unexpected error in stop_and_exit: {e}")
 
-
     # -------------------- helpers ------------------------------------
     @staticmethod
     def _find_vlc_exe() -> Optional[str]:
         """
         Comprehensive cross-platform VLC executable finder
-        
+
         Returns:
             str: Path to VLC executable or 'vlc' if found in PATH
             None: If no VLC executable found
@@ -194,7 +206,7 @@ class VLCPlayer:
             return vlc_path
 
         system = platform.system()
-        
+
         # Expanded macOS search paths
         if system == "Darwin":
             possible_paths = [
@@ -203,25 +215,27 @@ class VLCPlayer:
                 "/usr/local/bin/vlc",
                 "/Applications/VLC.app/Contents/MacOS/VLC.app/Contents/MacOS/VLC",
                 os.path.expanduser("~/Applications/VLC.app/Contents/MacOS/VLC"),
-                "/Applications/VLC.app/Contents/MacOS/VLC"
+                "/Applications/VLC.app/Contents/MacOS/VLC",
             ]
-        
+
         # Expanded Windows search paths
         elif system == "Windows":
-            possible_drives = ['C:', 'D:']
+            possible_drives = ["C:", "D:"]
             possible_program_files = [
                 os.environ.get("PROGRAMFILES", "C:\\Program Files"),
-                os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
+                os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
             ]
             possible_paths = []
             for drive in possible_drives:
                 for pf in possible_program_files:
-                    possible_paths.extend([
-                        rf"{pf}\VideoLAN\VLC\vlc.exe",
-                        rf"{drive}\Program Files\VideoLAN\VLC\vlc.exe",
-                        rf"{drive}\Program Files (x86)\VideoLAN\VLC\vlc.exe"
-                    ])
-        
+                    possible_paths.extend(
+                        [
+                            rf"{pf}\VideoLAN\VLC\vlc.exe",
+                            rf"{drive}\Program Files\VideoLAN\VLC\vlc.exe",
+                            rf"{drive}\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+                        ]
+                    )
+
         # Expanded Linux search paths
         elif system == "Linux":
             possible_paths = [
@@ -229,9 +243,9 @@ class VLCPlayer:
                 "/usr/local/bin/vlc",
                 "/snap/bin/vlc",
                 "/opt/vlc/bin/vlc",
-                os.path.expanduser("~/.local/bin/vlc")
+                os.path.expanduser("~/.local/bin/vlc"),
             ]
-        
+
         else:
             possible_paths = []
 
@@ -248,7 +262,6 @@ class VLCPlayer:
 
         return None
 
-
     # -------------------- status -------------------------------------
     def is_playing(self) -> bool:
         return self._playing
@@ -258,6 +271,7 @@ class VLCPlayer:
 # Global player instance
 _global_player = VLCPlayer()
 
+
 def find_sweep_file(channel):
     """
     Locate the .mlp or .mp4 sweep file for the given channel in the stimulus_dir.
@@ -266,80 +280,88 @@ def find_sweep_file(channel):
     """
     if not Qrew_common.stimulus_dir or not os.path.isdir(Qrew_common.stimulus_dir):
         return None
-    if 'SW' in channel:
-        channel = 'LFE'
+    if "SW" in channel:
+        channel = "LFE"
     # Custom pattern that treats common separators as boundaries
     # (?:^|[^A-Za-z0-9]) = start of string OR non-alphanumeric character
     # (?:[^A-Za-z0-9]|$) = non-alphanumeric character OR end of string
-    #pattern = r'(?:^|[^A-Za-z0-9])' + re.escape(channel) + r'\.' + r'(?:[^A-Za-z0-9]|$)'
-   # pattern = r'(?:^|[^A-Za-z0-9])' + re.escape(channel) + r'\.'
-    #pattern = re.escape(channel) + r'\.'
-    pattern = re.escape(channel) + r'\.'
+    # pattern = r'(?:^|[^A-Za-z0-9])' + re.escape(channel) + r'\.' + r'(?:[^A-Za-z0-9]|$)'
+    # pattern = r'(?:^|[^A-Za-z0-9])' + re.escape(channel) + r'\.'
+    # pattern = re.escape(channel) + r'\.'
+    pattern = re.escape(channel) + r"\."
 
     for fname in os.listdir(Qrew_common.stimulus_dir):
-        if fname.endswith('.mlp') or fname.endswith('.mp4'):
-           # name_without_ext = os.path.splitext(fname)[0]
-            
-          #  if re.search(pattern, name_without_ext, re.IGNORECASE):
+        if fname.endswith(".mlp") or fname.endswith(".mp4"):
+            # name_without_ext = os.path.splitext(fname)[0]
+
+            #  if re.search(pattern, name_without_ext, re.IGNORECASE):
             if re.search(pattern, fname, re.IGNORECASE):
 
                 return os.path.join(Qrew_common.stimulus_dir, fname)
 
     return None
 
+
 def play_file(filepath):
     """
     Non-blocking, cross-platform media file player.
-    
+
     Args:
         filepath (str): Path to media file to play
         show_interface (bool): Whether to show VLC interface (default: False for headless)
-    
+
     Returns:
         bool: True if playback started successfully
     """
     if not os.path.exists(filepath):
         print(f"❌ File not found: {filepath}")
         return False
-    
+
     try:
-        backend   = qs.get("vlc_backend", "auto")
-        show_interface  = qs.get("show_vlc_gui", False)
-        print(f"🎵 Starting playback: {os.path.basename(filepath)} (GUI: {show_interface}, Backend: {backend})")
-        
+        backend = qs.get("vlc_backend", "auto")
+        show_interface = qs.get("show_vlc_gui", False)
+        print(
+            f"🎵 Starting playback: {os.path.basename(filepath)} (GUI: {show_interface}, Backend: {backend})"
+        )
+
         _global_player.play(
             path=filepath,
             show_gui=show_interface,
             backend=backend,
-            on_finished=lambda: print(f"✅ Finished playing: {os.path.basename(filepath)}")
+            on_finished=lambda: print(
+                f"✅ Finished playing: {os.path.basename(filepath)}"
+            ),
         )
         return True
-        
+
     except Exception as e:
         print(f"❌ Playback failed: {e}")
         return False
 
+
 def play_file_with_callback(filepath, completion_callback=None):
     """
     Play file with completion callback for RTA verification.
-    
+
     Args:
         filepath (str): Path to media file to play
         show_interface (bool): Whether to show VLC interface
         completion_callback (callable): Function to call when playback completes
-    
+
     Returns:
         bool: True if playback started successfully
     """
     if not os.path.exists(filepath):
         print(f"❌ File not found: {filepath}")
         return False
-    
+
     try:
-        backend   = qs.get("vlc_backend", "auto")
-        show_interface  = qs.get("show_vlc_gui", False)        
-        print(f"🎵 Starting callback playback: {os.path.basename(filepath)} (GUI: {show_interface}, Backend: {backend})")
-            
+        backend = qs.get("vlc_backend", "auto")
+        show_interface = qs.get("show_vlc_gui", False)
+        print(
+            f"🎵 Starting callback playback: {os.path.basename(filepath)} (GUI: {show_interface}, Backend: {backend})"
+        )
+
         def on_finished():
             print(f"✅ Callback playback finished: {os.path.basename(filepath)}")
             if completion_callback:
@@ -347,68 +369,79 @@ def play_file_with_callback(filepath, completion_callback=None):
                     completion_callback()
                 except Exception as e:
                     print(f"Error in completion callback: {e}")
-        
+
         _global_player.play(
             path=filepath,
             show_gui=show_interface,
             backend=backend,
-            on_finished=on_finished
+            on_finished=on_finished,
         )
         return True
-        
+
     except Exception as e:
         print(f"❌ Callback playback failed: {e}")
         return False
+
 
 def stop_playback():
     """Stop any currently playing media"""
     # Note: Your VLCPlayer doesn't have a stop method, but we can check status
     if _global_player.is_playing():
-        print("⏹️ Media is still playing (cannot force stop with current implementation)")
+        print(
+            "⏹️ Media is still playing (cannot force stop with current implementation)"
+        )
     else:
         print("⏹️ No media currently playing")
+
 
 def is_playing():
     """Check if media is currently playing"""
     return _global_player.is_playing()
 
+
 def stop_vlc_and_exit():
     """stop vlc player either backend and kill process"""
     _global_player.stop_and_exit()
+
 
 # Legacy compatibility functions
 def stop_callback_playback():
     """Legacy function for compatibility"""
     stop_playback()
 
+
 def play_file_old(filepath, show_interface=False):
     """Legacy function for backward compatibility"""
     return play_file(filepath, show_interface)
+
 
 def find_vlc_installation():
     """Legacy function for backward compatibility"""
     return VLCPlayer._find_vlc_exe()
 
+
 def test_vlc_nonblocking():
     """Test VLC functionality"""
     print("🔍 Testing VLC...")
-    
+
     vlc_path = VLCPlayer._find_vlc_exe()
     if vlc_path:
         print(f"✅ VLC found at: {vlc_path}")
     else:
         print("⚠️ VLC not found in standard locations")
-    
+
     if vlc:
         print("✅ python-vlc library available")
     else:
         print("⚠️ python-vlc library not available")
-    
+
     print(f"🖥️ Platform: {platform.system()}")
+
 
 # ----------------------------------------------------------------------
 # Example usage and testing
 if __name__ == "__main__":
+
     def done():
         print("✓ playback finished")
 

@@ -306,7 +306,7 @@ Description: {APP_DESCRIPTION}
 
     # Add icon file
     icon_src = None
-    for icon_name in ["qrew.png", "Qrew.png", "qrew_desktop_500x500.png"]:
+    for icon_name in ["qrew.png", "Qrew.png", "Qrew_desktop_500x500.png"]:
         icon_path = ICONS_DIR / icon_name
         if icon_path.exists():
             icon_src = icon_path

@@ -476,10 +476,10 @@ def generate_pyinstaller_spec():
         "doctest",
         "xml.etree",
         "xml.parsers",
-        "email",
-        "http",
-        "urllib",
-        "html",
+        #   "email",
+        #  "http",
+        # "urllib",
+        # "html",
         "distutils",
         "setuptools",
         "pkg_resources",
@@ -504,10 +504,10 @@ def generate_pyinstaller_spec():
                 "PyQt5.QtWebKitWidgets",
                 "PyQt5.QtXml",
                 "PyQt5.QtXmlPatterns",
-                "pandas.plotting",
-                "pandas.io.excel",
-                "pandas.io.json",
-                "pandas.io.html",
+                #    "pandas.plotting",
+                #   "pandas.io.excel",
+                #  "pandas.io.json",
+                # "pandas.io.html",
                 "numpy.distutils",
                 "numpy.f2py",
                 "numpy.testing",
@@ -536,6 +536,18 @@ app = BUNDLE(
     strip_option = "True" if IS_LINUX else "False"
     upx_option = "True" if IS_LINUX else "False"  # Enable UPX for Linux
 
+    # Add VLC libraries and hook
+    from build_scripts.vlc_pyinstaller_helper import (
+        get_vlc_libraries,
+        get_runtime_hooks,
+    )
+
+    vlc_binaries = get_vlc_libraries()
+    vlc_hook = get_runtime_hooks()
+
+    # Add these to the spec file
+    vlc_binaries_str = repr(vlc_binaries)
+
     return f"""# -*- mode: python ; coding: utf-8 -*-
 
 import sys
@@ -551,13 +563,13 @@ block_cipher = None
 a = Analysis(
     [r'{root_dir_str}/qrew/main.py'],
     pathex=[r'{root_dir_str}', r'{qrew_dir_str}'],
-    binaries=[],
+    binaries={vlc_binaries_str},
     datas={data_files_str},
     hiddenimports={hidden_imports},
     excludes={excludes_list},
     hookspath=[],
     hooksconfig={{}},
-    runtime_hooks=[],
+    runtime_hooks=['{vlc_hook}'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
