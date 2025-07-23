@@ -2,7 +2,6 @@
 
 import os
 import platform
-from pathlib import Path
 import subprocess
 
 
@@ -47,26 +46,22 @@ def get_vlc_libraries():
         # Find Windows VLC location
         vlc_path = find_windows_vlc()
         if vlc_path:
-            lib_dir = os.path.dirname(vlc_path)
-            # Add main DLLs
+            plugin_path = os.path.join(os.path.dirname(vlc_path), "plugins")
             binaries.append((vlc_path, "."))
-            binaries.append((os.path.join(lib_dir, "libvlccore.dll"), "."))
-
-            # Add plugins directory - THIS IS CRITICAL
-            plugins_dir = os.path.join(lib_dir, "plugins")
-            if os.path.exists(plugins_dir):
-                print(f"Adding VLC plugins from {plugins_dir}")
-                for root, _, files in os.walk(plugins_dir):
+            binaries.append(
+                (os.path.join(os.path.dirname(vlc_path), "libvlccore.dll"), ".")
+            )
+            # Add plugins directory
+            if os.path.exists(plugin_path):
+                for root, _, files in os.walk(plugin_path):
                     for file in files:
                         if file.endswith(".dll"):
                             full_path = os.path.join(root, file)
                             rel_path = os.path.relpath(
-                                os.path.dirname(full_path), plugins_dir
+                                os.path.dirname(full_path), os.path.dirname(plugin_path)
                             )
                             dest_dir = os.path.join("plugins", rel_path)
                             binaries.append((full_path, dest_dir))
-            else:
-                print(f"WARNING: VLC plugins directory not found: {plugins_dir}")
 
     elif system == "Darwin":
         # macOS VLC location
@@ -189,44 +184,26 @@ def find_linux_vlc():
     return None
 
 
-def get_runtime_hooks():
-    """Get path to runtime hook for VLC"""
-    hook_content = """
-# PyInstaller runtime hook to configure VLC paths
-import os
-import sys
-import platform
-
-if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-    # Running in PyInstaller bundle
-    if platform.system() == "Darwin":
-        # Set VLC plugin path for macOS
-        os.environ['VLC_PLUGIN_PATH'] = os.path.join(sys._MEIPASS, 'plugins')
-    elif platform.system() == "Windows":
-        # Set VLC plugin path for Windows
-        os.environ['VLC_PLUGIN_PATH'] = os.path.join(sys._MEIPASS, 'plugins')
-    elif platform.system() == "Linux":
-        # Set VLC plugin path for Linux
-        os.environ['VLC_PLUGIN_PATH'] = os.path.join(sys._MEIPASS, 'plugins')
-"""
-
-    # Write hook to file
-    hook_path = Path(__file__).parent / "vlc_hook.py"
-    with open(hook_path, "w") as f:
-        f.write(hook_content)
-
-    return hook_path
-
-
 def find_vlc_lib_dir():
     """
     Return the directory containing the main VLC library for the current platform.
+    Searches environment variables first, then standard locations.
+
     Windows: libvlc.dll
     macOS: libvlc.dylib
     Linux: libvlc.so
+
     Returns None if not found.
     """
     system = platform.system()
+
+    # First check environment variables
+    env_libs = find_vlc_from_env()
+    if env_libs:
+        # Return directory of first found library from environment
+        return os.path.dirname(env_libs[0])
+
+    # If not found in environment, check standard locations
     if system == "Windows":
         lib_path = find_windows_vlc()
     elif system == "Darwin":
@@ -234,7 +211,19 @@ def find_vlc_lib_dir():
             "/Applications/VLC.app/Contents/MacOS/lib", "libvlc.dylib"
         )
         if not os.path.exists(lib_path):
-            lib_path = None
+            # Try alternate macOS locations
+            common_mac_locations = [
+                "/usr/local/lib/libvlc.dylib",
+                os.path.expanduser(
+                    "~/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib"
+                ),
+            ]
+            for loc in common_mac_locations:
+                if os.path.exists(loc):
+                    lib_path = loc
+                    break
+            else:
+                lib_path = None
     elif system == "Linux":
         lib_path = find_linux_vlc()
     else:

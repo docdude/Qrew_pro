@@ -480,7 +480,7 @@ def generate_pyinstaller_spec():
         #  "http",
         # "urllib",
         # "html",
-        "distutils",
+        # "distutils",
         "setuptools",
         "pkg_resources",
         "wheel",
@@ -519,6 +519,13 @@ def generate_pyinstaller_spec():
     if icon_path:
         icon_path_str = str(icon_path).replace("\\", "/")
 
+    version_info = ""
+    if platform.system() == "Windows":
+        version_info = str(ASSETS_DIR / "file_version_info.txt").replace("\\", "/")
+    elif platform.system() == "Darwin":  # macOS
+        version_info = None
+    else:  # Linux
+        version_info = None
     # macOS bundle section
     bundle_section = ""
     if IS_MACOS:
@@ -543,10 +550,37 @@ app = BUNDLE(
     )
 
     vlc_binaries = get_vlc_libraries()
+    # Remove duplicates while preserving order
+    seen = set()
+    vlc_binaries_unique = []
+    for item in vlc_binaries:
+        if item[0] not in seen:
+            seen.add(item[0])
+            # Convert Windows paths to forward slashes
+            src_path = item[0].replace("\\", "/")
+            vlc_binaries_unique.append((src_path, item[1]))
+
+    # Format properly for PyInstaller spec
+    vlc_binaries_str = "[\n"
+    for src, dest in vlc_binaries_unique:
+        vlc_binaries_str += f"    (r'{src}', '{dest}'),\n"
+    vlc_binaries_str += "]"
+
     vlc_hook = get_runtime_hooks()
-    vlc_hook_str = vlc_hook.as_posix()
-    # Add these to the spec file
-    vlc_binaries_str = repr(vlc_binaries)
+    if isinstance(vlc_hook, list):
+        # Don't create a string representation of a list, just format the elements
+        if len(vlc_hook) == 0:
+            vlc_hook_str = ""
+        else:
+            vlc_hook_str = ""
+            for i, hook in enumerate(vlc_hook):
+                hook_path = str(hook).replace("\\", "/")
+                vlc_hook_str += f"r'{hook_path}'"
+                if i < len(vlc_hook) - 1:
+                    vlc_hook_str += ", "
+    else:
+        # Single hook path - no brackets needed here
+        vlc_hook_str = f"r'{str(vlc_hook).replace('\\', '/')}'"
 
     return f"""# -*- mode: python ; coding: utf-8 -*-
 
@@ -569,7 +603,7 @@ a = Analysis(
     excludes={excludes_list},
     hookspath=[],
     hooksconfig={{}},
-    runtime_hooks=['{vlc_hook_str}'],
+    runtime_hooks=[{vlc_hook_str}],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -595,6 +629,8 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
+    version=r'{version_info}' if r'{version_info}' and os.path.exists(r'{version_info}') else None,
+
 )
 
 coll = COLLECT(

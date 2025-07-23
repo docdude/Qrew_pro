@@ -211,6 +211,12 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(":/Qrew_desktop_500x500.png"))
         self.resize(680, 900)
         self.setMinimumSize(600, 860)
+        # Set Windows taskbar icon
+        if platform.system() == "Windows":
+            import ctypes
+
+            myappid = "docdude.Qrew.1.0.0"  # Arbitrary string
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         self.bg_source = load_high_quality_image(":/banner_500x680.png")
         # self.bg_source = QPixmap(":/banner_500x680.png")  # original file
         self.bg_opacity = 0.35  # user-chosen α
@@ -2328,6 +2334,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(GLOBAL_STYLE)
+    app.setWindowIcon(QIcon(":/icons/Qrew_desktop_500x500.png"))  # Set app-wide icon
+
     # app.setStyleSheet(TOOLTIP_STYLE)
     # Check REW connection
     wait_for_rew_qt()

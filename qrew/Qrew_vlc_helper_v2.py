@@ -9,8 +9,174 @@ import time
 import shutil
 import re
 import signal
+import ctypes
 from pathlib import Path
 from typing import Callable, Optional
+
+try:
+    from . import Qrew_common
+    from . import Qrew_settings as qs
+    from .Qrew_find_vlc import find_vlc_lib_dir
+except ImportError:
+    import Qrew_common
+    import Qrew_settings as qs
+    from Qrew_find_vlc import find_vlc_lib_dir
+
+# ----------------------------------------------------------------------
+# VLC environment setup and discovery
+# ----------------------------------------------------------------------
+
+
+def debug_vlc_paths():
+    """Print diagnostic information about VLC paths"""
+    print("\n----- VLC PATH DIAGNOSTICS -----")
+
+    # Check environment variables
+    for var in ["PYTHON_VLC_LIB_PATH", "VLC_PLUGIN_PATH", "PATH"]:
+        value = os.environ.get(var)
+        if value:
+            print(f"{var} = {value}")
+            if var == "PYTHON_VLC_LIB_PATH" and platform.system() == "Windows":
+                if os.path.isfile(value):
+                    print(f"✅ PYTHON_VLC_LIB_PATH points to file: {value}")
+                elif os.path.exists(os.path.join(value, "libvlc.dll")):
+                    print(f"❌ PYTHON_VLC_LIB_PATH points to directory instead of file")
+                else:
+                    print(f"❌ libvlc.dll NOT found at {value}")
+
+    # Check if we can find VLC
+    lib_dir = find_vlc_lib_dir()
+    print(f"find_vlc_lib_dir() returned: {lib_dir}")
+    if lib_dir:
+        if platform.system() == "Windows":
+            dll_path = os.path.join(lib_dir, "libvlc.dll")
+            if os.path.exists(dll_path):
+                print(f"✅ Found libvlc.dll at {dll_path}")
+            else:
+                print(f"❌ libvlc.dll NOT found in {lib_dir}")
+        elif platform.system() == "Darwin":
+            dylib_path = os.path.join(lib_dir, "libvlc.dylib")
+            if os.path.exists(dylib_path):
+                print(f"✅ Found libvlc.dylib at {dylib_path}")
+            else:
+                print(f"❌ libvlc.dylib NOT found in {lib_dir}")
+        elif platform.system() == "Linux":
+            so_path = os.path.join(lib_dir, "libvlc.so")
+            if os.path.exists(so_path):
+                print(f"✅ Found libvlc.so at {so_path}")
+            else:
+                print(f"❌ libvlc.so NOT found in {lib_dir}")
+    print("--------------------------------\n")
+
+
+def setup_vlc_environment():
+    """
+    Set up environment for VLC library loading.
+    Must be called BEFORE importing vlc.
+    Returns True if environment was set up successfully.
+    """
+    try:
+        # Get VLC library directory
+        from .Qrew_find_vlc import find_vlc_lib_dir
+    except ImportError:
+        from Qrew_find_vlc import find_vlc_lib_dir
+
+    lib_dir = find_vlc_lib_dir()
+    if not lib_dir:
+        print("❌ VLC libraries not found in standard locations")
+        return False
+
+    system = platform.system()
+
+    # Set up environment based on platform
+    if system == "Windows":
+        # Normalize path for Windows
+        lib_dir = os.path.normpath(lib_dir)
+
+        # Add to DLL search path (Python 3.8+)
+        try:
+            os.add_dll_directory(lib_dir)
+            print(f"✅ Added VLC directory to DLL search path: {lib_dir}")
+        except (AttributeError, OSError) as e:
+            print(f"❌ Error adding DLL directory: {e}")
+
+        # Add to PATH
+        os.environ["PATH"] = lib_dir + os.pathsep + os.environ.get("PATH", "")
+
+        # Set plugin path
+        plugin_path = os.path.join(lib_dir, "plugins")
+        if os.path.isdir(plugin_path):
+            os.environ["VLC_PLUGIN_PATH"] = plugin_path
+            print(f"✅ Set VLC_PLUGIN_PATH to {plugin_path}")
+
+        # Test load the DLL directly to check for dependency issues
+        try:
+            dll_path = os.path.join(lib_dir, "libvlc.dll")
+            if os.path.exists(dll_path):
+                ctypes.CDLL(dll_path)
+                print(f"✅ Successfully loaded {dll_path} with ctypes")
+
+                # Clear PYTHON_VLC_LIB_PATH if it points to a directory
+                # (python-vlc expects a file path here, not a directory)
+                if "PYTHON_VLC_LIB_PATH" in os.environ and os.path.isdir(
+                    os.environ["PYTHON_VLC_LIB_PATH"]
+                ):
+                    del os.environ["PYTHON_VLC_LIB_PATH"]
+            else:
+                print(f"❌ {dll_path} not found")
+                return False
+        except Exception as e:
+            print(f"❌ Failed to load libvlc.dll: {e}")
+            return False
+
+    elif system == "Darwin":
+        # macOS: Set DYLD_LIBRARY_PATH and VLC_PLUGIN_PATH
+        os.environ["DYLD_LIBRARY_PATH"] = (
+            lib_dir + os.pathsep + os.environ.get("DYLD_LIBRARY_PATH", "")
+        )
+
+        # Set plugin path
+        plugin_path = os.path.join(lib_dir, "..", "plugins")
+        if os.path.isdir(plugin_path):
+            os.environ["VLC_PLUGIN_PATH"] = plugin_path
+            print(f"✅ Set VLC_PLUGIN_PATH to {plugin_path}")
+
+        # Pre-load libvlccore.dylib - often required on macOS
+        try:
+            core_path = os.path.join(lib_dir, "libvlccore.dylib")
+            if os.path.exists(core_path):
+                ctypes.CDLL(core_path)
+                print(f"✅ Pre-loaded {core_path}")
+        except Exception as e:
+            print(f"❌ Failed to pre-load libvlccore.dylib: {e}")
+
+    elif system == "Linux":
+        # Linux: Set LD_LIBRARY_PATH and VLC_PLUGIN_PATH
+        os.environ["LD_LIBRARY_PATH"] = (
+            lib_dir + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+        )
+
+        # Common plugin paths on Linux
+        for plugin_path in [
+            os.path.join(lib_dir, "vlc/plugins"),
+            os.path.join(os.path.dirname(lib_dir), "vlc/plugins"),
+            "/usr/lib/x86_64-linux-gnu/vlc/plugins",
+            "/usr/lib/vlc/plugins",
+        ]:
+            if os.path.isdir(plugin_path):
+                os.environ["VLC_PLUGIN_PATH"] = plugin_path
+                print(f"✅ Set VLC_PLUGIN_PATH to {plugin_path}")
+                break
+
+    return True
+
+
+# ----------------------------------------------------------------------
+# Actual VLC loading
+# ----------------------------------------------------------------------
+
+# First run diagnostics
+debug_vlc_paths()
 
 # PyInstaller frozen environment handling
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -19,21 +185,60 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     if os.environ.get("VLC_PLUGIN_PATH"):
         print(f"VLC_PLUGIN_PATH: {os.environ.get('VLC_PLUGIN_PATH')}")
 
-try:
-    from . import Qrew_common
-    from . import Qrew_settings as qs
-except:
-    import Qrew_common
-    import Qrew_settings as qs
+# Set up environment BEFORE importing vlc
+vlc = None
+if setup_vlc_environment():
+    try:
+        print("Attempting to import vlc module...")
+        import vlc
 
-try:
-    # if platform.system() == "Windows":
-    # os.add_dll_directory(r'C:\Users\centralmd\Downloads\vlc-3.0.21-win64\vlc-3.0.21')
-    import vlc  # python-vlc
-except ImportError:
-    vlc = None  # optional
+        print(
+            f"✅ Successfully imported vlc module (version: {vlc.libvlc_get_version().decode()})"
+        )
+    except ImportError as e:
+        print(f"❌ Failed to import vlc: {e}")
+
+        # Additional diagnostics for architecture issues
+        print("\nTrying to diagnose the issue...")
+        python_arch = "64-bit" if sys.maxsize > 2**32 else "32-bit"
+        print(f"Python architecture: {python_arch}")
+
+        # Try to load VLC libraries with detailed error reporting
+        try:
+            from .Qrew_find_vlc import find_vlc_lib_dir
+        except ImportError:
+            from Qrew_find_vlc import find_vlc_lib_dir
+
+        lib_dir = find_vlc_lib_dir()
+        if lib_dir and platform.system() == "Windows":
+            try:
+                dll_path = os.path.join(lib_dir, "libvlc.dll")
+                with open(dll_path, "rb") as f:
+                    # Read PE header to determine architecture
+                    f.seek(0x3C)
+                    pe_offset = struct.unpack("<I", f.read(4))[0]
+                    f.seek(pe_offset + 4)
+                    machine_type = struct.unpack("<H", f.read(2))[0]
+                    vlc_arch = "64-bit" if machine_type == 0x8664 else "32-bit"
+                    print(f"VLC architecture: {vlc_arch}")
+                    if python_arch != vlc_arch:
+                        print(
+                            f"❌ Architecture mismatch! Python is {python_arch} but VLC is {vlc_arch}"
+                        )
+                        print(
+                            f"   Solution: Install {python_arch} version of VLC or use {vlc_arch} Python"
+                        )
+            except Exception as e:
+                print(f"Could not determine VLC architecture: {e}")
 
 
+# ----------------------------------------------------------------------
+# Rest of the VLC player implementation
+# All code after this point can assume vlc has been imported if available
+# ----------------------------------------------------------------------
+
+
+# ... [rest of the VLCPlayer class and functions]
 # ----------------------------------------------------------------------
 class VLCPlayer:
     """
@@ -461,3 +666,6 @@ if __name__ == "__main__":
     else:
         print(f"Test file {media_file} not found")
         test_vlc_nonblocking()
+
+    # Debug VLC paths
+    debug_vlc_paths()
