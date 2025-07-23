@@ -180,4 +180,4 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     with open(hook_path, "w") as f:
         f.write(hook_content)
 
-    return str(hook_path)
+    return hook_path

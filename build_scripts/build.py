@@ -544,7 +544,7 @@ app = BUNDLE(
 
     vlc_binaries = get_vlc_libraries()
     vlc_hook = get_runtime_hooks()
-
+    vlc_hook_str = vlc_hook.as_posix()
     # Add these to the spec file
     vlc_binaries_str = repr(vlc_binaries)
 
@@ -569,7 +569,7 @@ a = Analysis(
     excludes={excludes_list},
     hookspath=[],
     hooksconfig={{}},
-    runtime_hooks=['{vlc_hook}'],
+    runtime_hooks=['{vlc_hook_str}'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
