@@ -305,15 +305,18 @@ Description: {APP_DESCRIPTION}
     print(f"INFO: Copied {copied_count} items, {failed_count} failed")
 
     # Add icon file
+    icon_dir = pkg_dir / "usr" / "share" / "icons" / "hicolor" / "scalable" / "apps"
+    icon_dir.mkdir(parents=True, exist_ok=True)
     icon_src = None
-    for icon_name in ["qrew.png", "Qrew.png", "Qrew_desktop_500x500.png"]:
+    for icon_name in ["qrew.png", "Qrew.png", "Qrew_desktop_500x500.svg"]:
         icon_path = ICONS_DIR / icon_name
         if icon_path.exists():
             icon_src = icon_path
             break
 
     if icon_src:
-        shutil.copy2(icon_src, app_install_dir / "icon.png")
+        shutil.copy2(icon_src, app_install_dir / "Qrew.svg")
+        shutil.copy2(icon_src, icon_dir / "Qrew.svg")
 
     # Create desktop entry
     desktop_dir = pkg_dir / "usr" / "share" / "applications"
@@ -323,10 +326,11 @@ Description: {APP_DESCRIPTION}
 Name={APP_NAME}
 Comment={APP_DESCRIPTION}
 Exec=/opt/{APP_NAME}/{APP_NAME}
-Icon=/opt/{APP_NAME}/icon.png
+Icon=Qrew
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Engineering;
+StartupWMClass={APP_NAME}
 """
     with open(desktop_dir / f"{APP_NAME.lower()}.desktop", "w") as f:
         f.write(desktop_content)

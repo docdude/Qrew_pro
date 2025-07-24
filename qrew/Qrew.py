@@ -785,6 +785,15 @@ class MainWindow(QMainWindow):
 
         self.gui_lock_changed.emit(not on)
 
+        # Toggle taskbar alert based on lock state
+        if not on:  # Controls are being disabled (locked)
+            # Start flashing (0 = use system default duration)
+
+            QApplication.alert(self, 0)
+        else:  # Controls are being enabled (unlocked)
+            # Stop flashing by bringing window to front
+            QApplication.setActiveWindow(self)
+
         # extra visual cue
 
     #  self.cancel_button.setVisible(not on)      # show only while locked
@@ -2328,6 +2337,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(GLOBAL_STYLE)
+
     # app.setStyleSheet(TOOLTIP_STYLE)
     # Check REW connection
     wait_for_rew_qt()

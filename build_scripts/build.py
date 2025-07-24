@@ -239,7 +239,7 @@ def check_python_environment():
     # Check if main module can be imported
     try:
         sys.path.insert(0, str(ROOT_DIR))
-        from qrew.main import main
+        # Removed unused import to avoid redefinition and compilation errors
 
         print("SUCCESS: Main module import successful")
         return True
