@@ -46,11 +46,15 @@ def sign_and_notarize_app():
         sign_cmd.extend(["--entitlements", str(entitlements_path)])
 
     try:
-        result = subprocess.run(sign_cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(sign_cmd, check=True, capture_output=True)
         print("SUCCESS: App bundle signed")
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Code signing failed: {e}")
-        print(f"Stderr: {e.stderr}")
+        try:
+            stderr = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
+            print(f"Stderr: {stderr}")
+        except Exception as decode_error:
+            print(f"Error decoding stderr: {decode_error}")
         return False
 
     # Verify signing

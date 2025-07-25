@@ -1,0 +1,375 @@
+name: Build Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install VLC
+      run: |
+        choco install vlc -y
+        # Add VLC to PATH for python-vlc
+        echo "C:\\Program Files\\VideoLAN\\VLC" >> $env:GITHUB_PATH
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-build.txt
+        
+    - name: Install NSIS
+      run: choco install nsis
+      
+    - name: Build Windows installer
+      run: |
+        cd ${{ github.workspace }}
+        python build_scripts/build.py --clean --onefile --platform
+      
+    - name: Check Windows build output
+      run: |
+        echo "Checking dist directory:"
+        if (Test-Path "dist") { Get-ChildItem -Recurse dist } else { echo "No dist directory found" }
+        
+    - name: Upload Windows installer
+      uses: actions/upload-artifact@v4
+      if: always()  # Upload even if build failed
+      with:
+        name: windows-installer
+        path: |
+          dist/*.exe
+          dist/*.zip
+        if-no-files-found: warn
+
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-13  # Intel runner
+          # We now have two options for arm64 builds
+          - arch: arm64
+            runner: macos-14  # Native Apple Silicon runner
+            build_script: python build_scripts/build.py --clean --onefile --platform
+          - arch: arm64-crosscompile
+            runner: macos-13  # Intel runner
+            build_script: bash build_scripts/build_arm64_universal2.sh --onefile --platform
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install VLC
+      run: |
+        brew install --cask vlc
+        # VLC should be in /Applications/VLC.app
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-build.txt
+
+    - name: Import Code Signing Certificate
+      uses: Apple-Actions/import-codesign-certs@v3
+      with:
+        p12-file-base64: ${{ secrets.CERT_P12_BASE64 }}
+        p12-password: ${{ secrets.CERT_PASSWORD }}
+      continue-on-error: true
+
+    # For cross-compilation on Intel, we need to install Universal2 Python
+    - name: Install Universal2 Python for cross-compilation
+      if: matrix.arch == 'arm64-crosscompile'
+      run: |
+        # Download and install Python.org's Universal2 Python installer
+        curl -L -o python.pkg "https://www.python.org/ftp/python/3.10.11/python-3.10.11-macos11.pkg"
+        sudo installer -pkg python.pkg -target /
+        
+        # Verify Universal2 Python installation
+        ls -la /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+        file /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+        
+        # Update the PYTHON_PATH in the script to use the correct version
+        sed -i '' 's|PYTHON_PATH=".*"|PYTHON_PATH="/Library/Frameworks/Python.framework/Versions/3.10/bin/python3"|g' build_scripts/build_arm64_universal2.sh
+
+    - name: Build macOS installer for ${{ matrix.arch }}
+      run: |
+        cd ${{ github.workspace }}
+        
+        # For standard builds (native x86_64 or arm64)
+        if [ "${{ matrix.arch }}" != "arm64-crosscompile" ]; then
+          export MACOS_BUILD_ARCH=${{ matrix.arch }}
+          python build_scripts/build.py --clean --onefile --platform
+        else
+          # For cross-compilation from Intel to ARM
+          bash build_scripts/build_arm64_universal2.sh --onefile --platform
+        fi
+      env:
+        CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    - name: Check macOS build output  
+      run: |
+        echo "Checking dist directory:"
+        ls -la dist/
+        if ls dist/*.dmg 1> /dev/null 2>&1; then
+          echo "DMG file details:"
+          ls -la dist/*.dmg
+          echo "Verifying DMG signature:"
+          codesign -dv dist/*.dmg || echo "DMG not signed or verification failed"
+        fi
+
+    # For cross-compiled builds, we need to rename for consistency
+    - name: Rename artifacts for consistency
+      if: matrix.arch == 'arm64-crosscompile'
+      run: |
+        # Standardize DMG names if they exist
+        for dmg in dist/*.dmg; do
+          if [ -f "$dmg" ]; then
+            base=$(basename "$dmg" .dmg)
+            mv "$dmg" "dist/${base}-arm64.dmg"
+          fi
+        done
+        
+        # Archive app bundle if it exists
+        if [ -d "dist/Qrew-arm64.app" ]; then
+          ditto -c -k --keepParent dist/Qrew-arm64.app dist/Qrew-arm64.app.zip
+        fi
+
+    - name: Upload macOS installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-installer-${{ matrix.arch == 'arm64-crosscompile' && 'arm64' || matrix.arch }}
+        path: |
+          dist/*.dmg
+          dist/*.app.zip
+        if-no-files-found: warn
+
+  build-macos-universal:
+    needs: build-macos
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download macOS artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: macos-installer-*
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install dmgbuild
+        
+    - name: Create Universal DMG
+      run: |
+        # Extract apps from artifacts
+        mkdir -p x86_64 arm64 universal
+        
+        # Find and extract x86_64 app
+        if ls macos-installer-x86_64/*.app.zip 1> /dev/null 2>&1; then
+          echo "Extracting x86_64 app from zip"
+          ditto -x -k macos-installer-x86_64/*.app.zip x86_64/
+        elif ls macos-installer-x86_64/*.dmg 1> /dev/null 2>&1; then
+          echo "Extracting x86_64 app from DMG"
+          hdiutil attach macos-installer-x86_64/*.dmg -mountpoint /Volumes/QrewX86 -nobrowse
+          cp -R /Volumes/QrewX86/*.app x86_64/
+          hdiutil detach /Volumes/QrewX86
+        else
+          echo "No x86_64 app found"
+          exit 1
+        fi
+        
+        # Find and extract arm64 app
+        if ls macos-installer-arm64/*.app.zip 1> /dev/null 2>&1; then
+          echo "Extracting arm64 app from zip"
+          ditto -x -k macos-installer-arm64/*.app.zip arm64/
+        elif ls macos-installer-arm64/*.dmg 1> /dev/null 2>&1; then
+          echo "Extracting arm64 app from DMG"
+          hdiutil attach macos-installer-arm64/*.dmg -mountpoint /Volumes/QrewARM -nobrowse
+          cp -R /Volumes/QrewARM/*.app arm64/
+          hdiutil detach /Volumes/QrewARM
+        else
+          echo "No arm64 app found"
+          exit 1
+        fi
+        
+        # List extracted apps
+        echo "Extracted x86_64 apps:"
+        ls -la x86_64/
+        echo "Extracted arm64 apps:"
+        ls -la arm64/
+        
+        # Find app names
+        X86_APP=$(find x86_64 -name "*.app" -depth 1)
+        ARM_APP=$(find arm64 -name "*.app" -depth 1)
+        
+        echo "Using x86_64 app: $X86_APP"
+        echo "Using arm64 app: $ARM_APP"
+        
+        # Create universal binary
+        python build_scripts/create_universal.py "$X86_APP" "$ARM_APP" universal/Qrew.app
+        
+        # Create universal DMG
+        python build_scripts/build_macos.py --create-dmg-only universal/Qrew.app
+        
+    - name: Upload Universal DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-installer-universal
+        path: dist/*-universal.dmg
+        if-no-files-found: warn
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          vlc \
+          libvlc-dev \
+          dpkg-dev \
+          rpm \
+          alien \
+          build-essential \
+          python3-dev \
+          upx-ucl \
+          binutils \
+          patchelf \
+          libxkbcommon-x11-0 \
+          libxcb-xinerama0 \
+          libxcb-cursor0 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-shape0
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-build.txt
+        
+    - name: Build Linux packages
+      run: |
+        cd ${{ github.workspace }}
+        export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
+        python build_scripts/build.py --clean --onefile --platform
+
+    - name: Check Linux build output
+      run: |
+        echo "Checking dist directory:"
+        ls -la dist/
+
+    - name: Upload Linux packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-packages
+        path: |
+          dist/*.deb
+          dist/*.rpm  
+          dist/*.tar.gz
+          dist/*.AppImage
+        if-no-files-found: warn
+
+  release:
+    needs: [build-windows, build-macos, build-macos-universal, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    # Add explicit permissions
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: List downloaded artifacts
+      run: |
+        echo "Downloaded artifacts:"
+        find . -type f -name "*" | head -20
+        
+    - name: Prepare release files
+      run: |
+        mkdir -p release-files
+        # Copy all artifacts to release-files directory
+        find . -name "*.exe" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.dmg" -exec cp {} release-files/ \; 2>/dev/null || true  
+        find . -name "*.deb" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.rpm" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.tar.gz" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.zip" -exec cp {} release-files/ \; 2>/dev/null || true
+        find . -name "*.AppImage" -exec cp {} release-files/ \; 2>/dev/null || true
+        
+        echo "Release files prepared:"
+        ls -la release-files/
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release-files/*
+        draft: false
+        prerelease: false
+        fail_on_unmatched_files: false
+        body: |
+          # Qrew v${{ github.ref_name }}
+          
+          Automated loudspeaker measurement system using REW API.
+          
+          ## Downloads
+          
+          - **Windows**: `Qrew-*-windows-installer.exe` or `Qrew-*-windows.zip`
+          - **macOS Intel**: `Qrew-*-macos-x86_64.dmg`
+          - **macOS Apple Silicon**: `Qrew-*-macos-arm64.dmg`
+          - **macOS Universal**: `Qrew-*-macos-universal.dmg`
+          - **Linux**: `qrew-*-linux.deb`, `qrew-*-linux.rpm`, or `qrew-*-linux.tar.gz`
+          
+          ## Requirements
+          
+          - VLC Media Player must be installed
+          - REW (Room EQ Wizard) for measurements
+          
+          ## Installation
+          
+          1. Download the appropriate package for your platform
+          2. Install VLC Media Player if not already installed
+          3. Install/extract Qrew
+          4. Launch REW, start REW API (need pro upgrade license to control REW via the API)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,27 +29,74 @@ def run_command(cmd, cwd=None, timeout=600):
     print(f"Working directory: {cwd or os.getcwd()}")
 
     try:
+        # Don't use text=True to avoid encoding issues
         result = subprocess.run(
-            cmd, cwd=cwd, check=True, capture_output=True, text=True, timeout=timeout
+            cmd, cwd=cwd, check=True, capture_output=True, timeout=timeout
         )
-        if result.stdout:
-            print("STDOUT:", result.stdout)
-        if result.stderr:
-            print("STDERR:", result.stderr)
+        # Handle stdout and stderr decoding with error handling
+        try:
+            stdout = result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                # Fallback to 'ignore' error handler if utf-8 fails
+                stdout = result.stdout.decode("utf-8", errors="ignore")
+            except:
+                stdout = str(result.stdout)
+
+        try:
+            stderr = result.stderr.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                stderr = result.stderr.decode("utf-8", errors="ignore")
+            except:
+                stderr = str(result.stderr)
+
+        if stdout:
+            print("STDOUT:", stdout)
+        if stderr:
+            print("STDERR:", stderr)
         return True
     except subprocess.TimeoutExpired:
         print(f"ERROR: Command timed out after {timeout} seconds")
         return False
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Command failed with exit code {e.returncode}")
-        if e.stdout:
-            print(f"STDOUT: {e.stdout}")
-        if e.stderr:
-            print(f"STDERR: {e.stderr}")
+        # Handle stdout and stderr with same error handling
+        try:
+            stdout = e.stdout.decode("utf-8", errors="ignore") if e.stdout else ""
+            stderr = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
+        except:
+            stdout = str(e.stdout)
+            stderr = str(e.stderr)
+
+        if stdout:
+            print(f"STDOUT: {stdout}")
+        if stderr:
+            print(f"STDERR: {stderr}")
         return False
     except Exception as e:
         print(f"ERROR: Unexpected error: {e}")
         return False
+
+
+def ensure_directories():
+    """Ensure necessary directories exist"""
+    # Create build and dist directories if they don't exist
+    for dir_path in [BUILD_DIR, DIST_DIR]:
+        if not dir_path.exists():
+            dir_path.mkdir(parents=True, exist_ok=True)
+            print(f"Created directory: {dir_path}")
+
+
+def get_icon_for_platform():
+    """Get platform-specific icon path"""
+    return ICON_PATHS.get(PLATFORM)
+
+
+def get_macos_bundle_info():
+    """Get macOS bundle info dictionary"""
+    info = MACOS_BUNDLE_INFO
+    return info
 
 
 def install_build_dependencies():
@@ -63,7 +110,7 @@ def install_build_dependencies():
     elif IS_WINDOWS:
         dependencies.extend(["pywin32>=227"])
     elif IS_LINUX:
-        dependencies.extend(["python3-distutils"])
+        dependencies.extend(["python3-distutils", "staticx"])
 
     cmd = [sys.executable, "-m", "pip", "install"] + dependencies
     return run_command(cmd)
@@ -83,6 +130,11 @@ def check_build_environment():
     # Check platform
     print(f"Platform: {platform_module.system()} {platform_module.release()}")
     print(f"Architecture: {platform_module.machine()}")
+
+    # Check build architecture for macOS
+    if IS_MACOS:
+        arch = os.getenv("MACOS_BUILD_ARCH", "native")
+        print(f"macOS build architecture: {arch}")
 
     # Check disk space
     if hasattr(shutil, "disk_usage"):
@@ -136,48 +188,49 @@ def clean_build():
     ensure_directories()
 
 
+def ensure_icon_exists():
+    """Ensure icons exist for all platforms"""
+    success = True
+
+    # Check each platform's icon
+    for platform, icon_path in ICON_PATHS.items():
+        if icon_path and icon_path.exists():
+            print(f"✓ Found {platform} icon: {icon_path}")
+        else:
+            print(f"✗ Missing {platform} icon: {icon_path}")
+            success = False
+
+    # Special handling for macOS
+    if IS_MACOS:
+        success = ensure_macos_icon() and success
+
+    return success
+
+
 def ensure_macos_icon():
     """Ensure macOS icon exists and is in correct format"""
     if not IS_MACOS:
         return True
 
     icns_path = ICONS_DIR / "Qrew.icns"
-    appiconset_path = ICONS_DIR / "Qrew.appiconset"
-    png_path = ICONS_DIR / "Qrew_desktop_500x500.png"
 
     # If ICNS already exists, we're good
     if icns_path.exists():
         print(f"SUCCESS: Found existing ICNS: {icns_path}")
         return True
 
-    # Try to convert appiconset to icns
-    if appiconset_path.exists() and (appiconset_path / "Contents.json").exists():
-        print(f"Converting {appiconset_path} to {icns_path}")
-        try:
-            result = subprocess.run(
-                ["iconutil", "-c", "icns", str(appiconset_path), "-o", str(icns_path)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            print(f"SUCCESS: Created {icns_path}")
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"ERROR: Failed to convert appiconset: {e}")
-            if e.stderr:
-                print(f"Stderr: {e.stderr}")
-
-    # Try to create iconset from PNG
+    # Try to create from PNG
+    png_path = ICONS_DIR / "Qrew_desktop_500x500.png"
     if png_path.exists():
-        print(f"Creating iconset from {png_path}")
-        return create_iconset_from_png(png_path, icns_path)
+        print(f"Creating ICNS from {png_path}")
+        return create_icns_from_png(png_path, icns_path)
 
-    print("WARNING: No suitable icon found, continuing without icon")
+    print("WARNING: No suitable icon found for macOS")
     return False
 
 
-def create_iconset_from_png(png_path, icns_path):
-    """Create iconset and icns from PNG file"""
+def create_icns_from_png(png_path, icns_path):
+    """Create ICNS file from PNG"""
     try:
         from PIL import Image
 
@@ -217,14 +270,17 @@ def create_iconset_from_png(png_path, icns_path):
             text=True,
         )
 
+        # Clean up iconset
+        shutil.rmtree(iconset_path)
+
         print(f"SUCCESS: Created ICNS from PNG: {icns_path}")
         return True
 
     except ImportError:
-        print("ERROR: Pillow not installed, cannot convert PNG to iconset")
+        print("ERROR: Pillow not installed, cannot convert PNG to ICNS")
         return False
     except Exception as e:
-        print(f"ERROR: Failed to create iconset: {e}")
+        print(f"ERROR: Failed to create ICNS: {e}")
         return False
 
 
@@ -249,72 +305,21 @@ def check_python_environment():
         return False
 
 
-def verify_qrew_modules():
-    """Verify all required Qrew modules can be imported"""
-    print("Verifying Qrew modules...")
-
-    required_modules = [
-        "qrew.Qrew",
-        "qrew.Qrew_api_helper",
-        "qrew.Qrew_message_handlers",
-        "qrew.Qrew_common",
-        "qrew.Qrew_styles",
-        "qrew.Qrew_button",
-        "qrew.Qrew_dialogs",
-        "qrew.Qrew_workers_v2",
-        "qrew.Qrew_settings",
-        "qrew.Qrew_measurement_metrics",
-        "qrew.Qrew_micwidget_icons",
-        "qrew.Qrew_vlc_helper_v2",
-        "qrew.Qrew_messagebox",
-        "qrew.Qrew_resources",
-    ]
-
-    missing_modules = []
-
-    for module_name in required_modules:
-        try:
-            __import__(module_name)
-            print(f"SUCCESS: {module_name}")
-        except ImportError as e:
-            print(f"WARNING: {module_name} - {e}")
-            missing_modules.append(module_name)
-
-    if missing_modules:
-        print(f"WARNING: {len(missing_modules)} modules could not be imported")
-        return False
-
-    print("SUCCESS: All required modules verified")
-    return True
-
-
-def build_pyinstaller():
+def build_pyinstaller(onefile=False):
     """Build application using PyInstaller"""
-    print("Building with PyInstaller...")
+    print(f"Building with PyInstaller ({'onefile' if onefile else 'onedir'} mode)...")
 
     # Check Python environment
     if not check_python_environment():
         return False
 
-    # Verify Qrew modules
-    if not verify_qrew_modules():
-        print("WARNING: Some modules missing, build may fail")
-
-    # Ensure macOS icon if needed
-    if IS_MACOS:
-        ensure_macos_icon()
-
-    # Test PyInstaller installation
-    print("Testing PyInstaller installation...")
-    if not run_command(
-        [sys.executable, "-m", "PyInstaller", "--version"], cwd=ROOT_DIR
-    ):
-        print("ERROR: PyInstaller not working properly")
-        return False
+    # Ensure icons exist
+    if not ensure_icon_exists():
+        print("WARNING: Some icons missing, build may have icon issues")
 
     # Generate spec file
     print("Generating PyInstaller spec file...")
-    spec_content = generate_pyinstaller_spec()
+    spec_content = generate_pyinstaller_spec(onefile=onefile)
     spec_file = ROOT_DIR / f"{APP_NAME}.spec"
 
     with open(spec_file, "w") as f:
@@ -325,7 +330,15 @@ def build_pyinstaller():
     print("Starting PyInstaller build...")
     start_time = time.time()
 
+    # Using spec file directly (don't add --target-arch flag)
     cmd = [sys.executable, "-m", "PyInstaller", "--log-level=INFO", str(spec_file)]
+
+    # Note: For macOS cross-compilation, the target architecture is already
+    # included in the spec file so we don't need to pass it as a command-line parameter
+    arch = os.getenv("MACOS_BUILD_ARCH", "native")
+    if IS_MACOS and arch != "native":
+        print(f"Building for macOS {arch} architecture (specified in spec file)")
+
     success = run_command(cmd, cwd=ROOT_DIR, timeout=1200)  # 20 minutes timeout
 
     build_time = time.time() - start_time
@@ -333,23 +346,33 @@ def build_pyinstaller():
 
     if success:
         print("SUCCESS: PyInstaller build completed successfully")
+        return verify_build_output(onefile)
 
-        # Verify output and report sizes
-        if IS_MACOS:
-            app_path = DIST_DIR / f"{APP_NAME}.app"
+    return False
+
+
+def verify_build_output(onefile=False):
+    """Verify PyInstaller output"""
+    if IS_MACOS:
+        if onefile:
+            app_path = DIST_DIR / APP_NAME
             if app_path.exists():
+                print(f"SUCCESS: macOS executable created: {app_path}")
+                return True
+        else:
+            app_path = DIST_DIR / f"{APP_NAME}.app"
+            if app_path.exists() and verify_macos_app_structure(app_path):
                 size = get_directory_size(app_path)
                 print(f"SUCCESS: macOS app bundle created: {app_path} ({size:.1f} MB)")
-
-                # Verify app structure
-                if verify_macos_app_structure(app_path):
-                    print("SUCCESS: App bundle structure verified")
-                else:
-                    print("WARNING: App bundle structure issues detected")
-
-            else:
-                print("ERROR: macOS app bundle not found")
-                return False
+                return True
+    else:
+        if onefile:
+            exe_name = f"{APP_NAME}.exe" if IS_WINDOWS else APP_NAME
+            exe_path = DIST_DIR / exe_name
+            if exe_path.exists():
+                size_mb = exe_path.stat().st_size / (1024 * 1024)
+                print(f"SUCCESS: Executable created: {exe_path} ({size_mb:.1f} MB)")
+                return True
         else:
             exe_dir = DIST_DIR / APP_NAME
             if exe_dir.exists():
@@ -357,24 +380,10 @@ def build_pyinstaller():
                 print(
                     f"SUCCESS: Application directory created: {exe_dir} ({size:.1f} MB)"
                 )
-            else:
-                print("ERROR: Application directory not found")
-                return False
+                return True
 
-    return success
-
-
-def get_directory_size(path):
-    """Get directory size in MB"""
-    total_size = 0
-    for dirpath, dirnames, filenames in os.walk(path):
-        for filename in filenames:
-            filepath = os.path.join(dirpath, filename)
-            try:
-                total_size += os.path.getsize(filepath)
-            except:
-                pass
-    return total_size / (1024 * 1024)
+    print("ERROR: Expected output not found")
+    return False
 
 
 def verify_macos_app_structure(app_path):
@@ -390,10 +399,28 @@ def verify_macos_app_structure(app_path):
             print(f"ERROR: Required app component missing: {path}")
             return False
 
+    # Verify icon
+    icon_path = app_path / "Contents" / "Resources" / "Qrew.icns"
+    if not icon_path.exists():
+        print("WARNING: App icon missing")
+
     return True
 
 
-def generate_pyinstaller_spec():
+def get_directory_size(path):
+    """Get directory size in MB"""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            try:
+                total_size += os.path.getsize(filepath)
+            except:
+                pass
+    return total_size / (1024 * 1024)
+
+
+def generate_pyinstaller_spec(onefile=False):
     """Generate PyInstaller spec file with proper configuration"""
     icon_path = get_icon_for_platform()
 
@@ -401,140 +428,153 @@ def generate_pyinstaller_spec():
     root_dir_str = str(ROOT_DIR).replace("\\", "/")
     qrew_dir_str = str(ROOT_DIR / "qrew").replace("\\", "/")
 
-    # Data files - only include files that exist
+    # Essential data files only - no source code
     data_files = []
 
-    # Add qrew package assets
-    qrew_assets = ROOT_DIR / "qrew" / "assets"
-    if qrew_assets.exists():
-        assets_str = str(qrew_assets).replace("\\", "/")
-        data_files.append(f"(r'{assets_str}', 'assets')")
+    # Use ESSENTIAL_DATA_FILES from build_config.py
+    print(f"Adding {len(ESSENTIAL_DATA_FILES)} essential data file patterns")
 
-    # Add all qrew python files individually
-    qrew_py_files = []
-    qrew_dir = ROOT_DIR / "qrew"
-    if qrew_dir.exists():
-        for py_file in qrew_dir.glob("*.py"):
-            if py_file.name != "__pycache__":
-                py_file_str = str(py_file).replace("\\", "/")
-                qrew_py_files.append(f"(r'{py_file_str}', 'qrew')")
+    for pattern, target_dir in ESSENTIAL_DATA_FILES:
+        base_path = ROOT_DIR
+        glob_pattern = pattern.split("/")[-1]
+        dir_parts = pattern.split("/")[:-1]
 
-    # Add documentation files
-    for file_path in [ROOT_DIR / "README.md", ROOT_DIR / "LICENSE"]:
-        if file_path.exists():
-            file_str = str(file_path).replace("\\", "/")
-            data_files.append(f"(r'{file_str}', '.')")
+        for part in dir_parts:
+            base_path = base_path / part
 
-    data_files_str = "[" + ", ".join(data_files + qrew_py_files) + "]"
+        if "*" in glob_pattern:
+            # Handle glob pattern
+            if base_path.exists():
+                for file_path in base_path.glob(glob_pattern):
+                    if file_path.exists():
+                        file_str = str(file_path).replace("\\", "/")
+                        data_files.append(f"(r'{file_str}', '{target_dir}')")
+        else:
+            # Handle specific file
+            file_path = base_path / glob_pattern
+            if file_path.exists():
+                file_str = str(file_path).replace("\\", "/")
 
-    # Hidden imports - verified against actual module structure
-    hidden_imports = [
-        "qrew",
-        "qrew.Qrew",
-        "qrew.Qrew_api_helper",
-        "qrew.Qrew_message_handlers",
-        "qrew.Qrew_common",
-        "qrew.Qrew_styles",
-        "qrew.Qrew_button",
-        "qrew.Qrew_dialogs",
-        "qrew.Qrew_workers_v2",
-        "qrew.Qrew_settings",
-        "qrew.Qrew_measurement_metrics",
-        "qrew.Qrew_micwidget_icons",
-        "qrew.Qrew_vlc_helper_v2",
-        "qrew.Qrew_messagebox",
-        "qrew.Qrew_resources",
-        # External
-        "requests",
-        "flask",
-        "gevent",
-        "numpy",
-        "pandas",
-        "vlc",
-        "colour",
-        # PyQt5 modules
-        "PyQt5.sip",
-        "PyQt5.QtCore",
-        "PyQt5.QtGui",
-        "PyQt5.QtWidgets",
-    ]
+                # For settings.json, add it to the root AND the qrew subdirectory for full compatibility
+                if glob_pattern == "settings.json":
+                    data_files.append(f"(r'{file_str}', '.')")  # Root directory
+                    data_files.append(f"(r'{file_str}', 'qrew')")  # qrew subdirectory
+                    print(
+                        f"Added essential file (three locations): {file_path} -> root, qrew, and {target_dir}"
+                    )
 
-    # Modules to exclude for smaller build size
-    excludes_list = [
-        "tkinter",
-        "matplotlib",
-        "IPython",
-        "PyQt5.QtQuick",
-        "PyQt5.QtQml",
-        "PyQt5.QtWebSockets",
-        "PyQt5.QtDBus",
-        "PyQt5.QtPrintSupport",
-        "test",
-        "unittest",
-        "pdb",
-        "pydoc",
-        "doctest",
-        "xml.etree",
-        "xml.parsers",
-        "email",
-        "http",
-        "urllib",
-        "html",
-        "distutils",
-        "setuptools",
-        "pkg_resources",
-        "wheel",
-        "pip",
-    ]
+                # Always add to the target directory too
+                data_files.append(f"(r'{file_str}', '{target_dir}')")
 
-    # Add Linux-specific excludes
-    if IS_LINUX:
-        excludes_list.extend(
-            [
-                "PyQt5.QtMultimedia",
-                "PyQt5.QtMultimediaWidgets",
-                "PyQt5.QtOpenGL",
-                "PyQt5.QtPositioning",
-                "PyQt5.QtQuickWidgets",
-                "PyQt5.QtSensors",
-                "PyQt5.QtSerialPort",
-                "PyQt5.QtSql",
-                "PyQt5.QtTest",
-                "PyQt5.QtWebKit",
-                "PyQt5.QtWebKitWidgets",
-                "PyQt5.QtXml",
-                "PyQt5.QtXmlPatterns",
-                "pandas.plotting",
-                "pandas.io.excel",
-                "pandas.io.json",
-                "pandas.io.html",
-                "numpy.distutils",
-                "numpy.f2py",
-                "numpy.testing",
-            ]
-        )
+                if glob_pattern != "settings.json":
+                    print(f"Added essential file: {file_path} -> {target_dir}")
+            else:
+                print(f"WARNING: Essential file not found: {file_path}")
 
+    data_files_str = "[" + ", ".join(data_files) + "]"
+
+    # 🔧 FIX: Use HIDDEN_IMPORTS from build_config.py instead of hardcoded list
+    hidden_imports = HIDDEN_IMPORTS
+
+    # 🔧 FIX: Use EXCLUDES from build_config.py instead of hardcoded list
+    excludes_list = EXCLUDES
+
+    print(f"Using {len(excludes_list)} exclusions from build_config.py")
+    print(f"Scipy exclusions included: {any('scipy' in ex for ex in excludes_list)}")
     # Convert icon path for spec file
     icon_path_str = ""
     if icon_path:
         icon_path_str = str(icon_path).replace("\\", "/")
 
-    # macOS bundle section
-    bundle_section = ""
+    # Get VLC binaries
+    from build_scripts.vlc_pyinstaller_helper import (
+        get_vlc_libraries,
+        get_runtime_hooks,
+    )
+
+    vlc_binaries = get_vlc_libraries()
+    vlc_hook = get_runtime_hooks()
+    vlc_hook_str = vlc_hook.as_posix()
+    vlc_binaries_str = repr(vlc_binaries)
+
+    # macOS-specific options
+    macos_options = ""
+    target_arch_str = "None"
+
+    # Get target architecture for macOS builds
     if IS_MACOS:
+        arch = os.getenv("MACOS_BUILD_ARCH", "native")
+        if arch != "native":
+            target_arch_str = f"'{arch}'"  # For spec file
+
+        # Bundle info for macOS app
         bundle_info = get_macos_bundle_info()
-        bundle_section = f"""
+        if not onefile:
+            macos_options = f"""
 app = BUNDLE(
-    coll,
+    exe,
     name='{APP_NAME}.app',
     icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
     bundle_identifier='{BUNDLE_IDENTIFIER}',
     info_plist={bundle_info}
 )"""
 
-    # Enable stripping and compression for Linux
-    strip_option = "True" if IS_LINUX else "False"
-    upx_option = "True" if IS_LINUX else "False"  # Enable UPX for Linux
+    # Build mode specific options
+    if onefile:
+        exe_section = f"""
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='{APP_NAME}',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip={str(IS_LINUX).capitalize()},
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch={target_arch_str},
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
+)"""
+    else:
+        exe_section = f"""
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='{APP_NAME}',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip={str(IS_LINUX).capitalize()},
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch={target_arch_str},
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip={str(IS_LINUX).capitalize()},
+    upx=True,
+    upx_exclude=[],
+    name='{APP_NAME}',
+)"""
 
     return f"""# -*- mode: python ; coding: utf-8 -*-
 
@@ -547,17 +587,16 @@ sys.path.insert(0, r'{root_dir_str}')
 
 block_cipher = None
 
-
 a = Analysis(
     [r'{root_dir_str}/qrew/main.py'],
     pathex=[r'{root_dir_str}', r'{qrew_dir_str}'],
-    binaries=[],
+    binaries={vlc_binaries_str},
     datas={data_files_str},
     hiddenimports={hidden_imports},
     excludes={excludes_list},
     hookspath=[],
     hooksconfig={{}},
-    runtime_hooks=[],
+    runtime_hooks=['{vlc_hook_str}'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -565,36 +604,7 @@ a = Analysis(
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='{APP_NAME}',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip={strip_option},  # Strip debug symbols on Linux
-    upx={upx_option},     # Enable UPX compression on Linux
-    console=False,  # Set to True for debugging
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=r'{icon_path_str}' if r'{icon_path_str}' else None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip={strip_option},  # Strip binaries
-    upx={upx_option},      # Compress binaries
-    upx_exclude=[],
-    name='{APP_NAME}',
-){bundle_section}
+{exe_section}{macos_options}
 """
 
 
@@ -610,6 +620,9 @@ def main():
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--verify", action="store_true", help="Verify environment only")
+    parser.add_argument(
+        "--onefile", action="store_true", help="Build single executable file"
+    )
 
     args = parser.parse_args()
 
@@ -620,6 +633,7 @@ def main():
     print(f"Build directory: {BUILD_DIR}")
     print(f"Distribution directory: {DIST_DIR}")
     print(f"App version: {APP_VERSION}")
+    print(f"Build mode: {'onefile' if args.onefile else 'onedir'}")
 
     # Check build environment
     if not check_build_environment():
@@ -647,7 +661,7 @@ def main():
     ensure_directories()
 
     # Build with PyInstaller
-    if not build_pyinstaller():
+    if not build_pyinstaller(onefile=args.onefile):
         print("ERROR: PyInstaller build failed")
         sys.exit(1)
 
@@ -659,7 +673,7 @@ def main():
             try:
                 from build_scripts.build_macos import build_macos_installer
 
-                if build_macos_installer():
+                if build_macos_installer(onefile=args.onefile):
                     print("SUCCESS: macOS installer created successfully")
                 else:
                     print("ERROR: macOS installer creation failed")
@@ -672,7 +686,7 @@ def main():
             try:
                 from build_scripts.build_windows import build_windows_installer
 
-                if build_windows_installer():
+                if build_windows_installer(onefile=args.onefile):
                     print("SUCCESS: Windows installer created successfully")
                 else:
                     print("ERROR: Windows installer creation failed")
@@ -685,7 +699,7 @@ def main():
             try:
                 from build_scripts.build_linux import build_linux_installer
 
-                if build_linux_installer():
+                if build_linux_installer(onefile=args.onefile):
                     print("SUCCESS: Linux packages created successfully")
                 else:
                     print("ERROR: Linux package creation failed")
@@ -713,23 +727,6 @@ def main():
                 print(f"  DIR:  {item.name}/ ({size_mb:.1f} MB)")
 
         print(f"\nTotal output size: {total_size:.1f} MB")
-
-    # Platform-specific instructions
-    if IS_MACOS:
-        app_path = DIST_DIR / f"{APP_NAME}.app"
-        if app_path.exists():
-            print(f"\nmacOS app created: {app_path}")
-            print(f"Test with: open '{app_path}'")
-    elif IS_WINDOWS:
-        exe_path = DIST_DIR / APP_NAME / f"{APP_NAME}.exe"
-        if exe_path.exists():
-            print(f"\nWindows executable created: {exe_path}")
-            print(f"Test with: '{exe_path}'")
-    elif IS_LINUX:
-        exe_path = DIST_DIR / APP_NAME / APP_NAME
-        if exe_path.exists():
-            print(f"\nLinux executable created: {exe_path}")
-            print(f"Test with: '{exe_path}'")
 
 
 if __name__ == "__main__":

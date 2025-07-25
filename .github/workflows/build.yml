@@ -6,6 +6,7 @@ on:
       - 'v*'
   pull_request:
     branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   build-windows:
@@ -22,7 +23,7 @@ jobs:
       run: |
         choco install vlc -y
         # Add VLC to PATH for python-vlc
-        echo "C:\Program Files\VideoLAN\VLC" >> $env:GITHUB_PATH
+        echo "C:\\Program Files\\VideoLAN\\VLC" >> $env:GITHUB_PATH
         
     - name: Install dependencies
       run: |
@@ -36,7 +37,7 @@ jobs:
     - name: Build Windows installer
       run: |
         cd ${{ github.workspace }}
-        python build_scripts/build.py --clean --platform
+        python build_scripts/build.py --clean --onefile --platform
       
     - name: Check Windows build output
       run: |
@@ -54,7 +55,14 @@ jobs:
         if-no-files-found: warn
 
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-13  # Intel runner
+          - arch: arm64
+            runner: macos-14  # Apple Silicon runner
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
     
@@ -81,10 +89,11 @@ jobs:
         p12-password: ${{ secrets.CERT_PASSWORD }}
       continue-on-error: true
 
-    - name: Build macOS installer
+    - name: Build macOS installer for ${{ matrix.arch }}
       run: |
         cd ${{ github.workspace }}
-        python build_scripts/build.py --clean --platform
+        export MACOS_BUILD_ARCH=${{ matrix.arch }}
+        python build_scripts/build.py --clean --onefile --platform
       env:
         CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -105,12 +114,60 @@ jobs:
     - name: Upload macOS installer
       uses: actions/upload-artifact@v4
       with:
-        name: macos-installer
+        name: macos-installer-${{ matrix.arch }}
         path: |
           dist/*.dmg
           dist/*.app.zip
         if-no-files-found: warn
 
+  build-macos-universal:
+    needs: build-macos
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download macOS artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: macos-installer-*
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install dmgbuild
+        
+    - name: Create Universal DMG
+      run: |
+        # Extract DMGs
+        mkdir -p x86_64 arm64 universal
+        hdiutil attach macos-installer-x86_64/*.dmg -mountpoint /Volumes/QrewX86 -nobrowse
+        hdiutil attach macos-installer-arm64/*.dmg -mountpoint /Volumes/QrewARM -nobrowse
+        
+        # Copy apps
+        cp -R /Volumes/QrewX86/*.app x86_64/
+        cp -R /Volumes/QrewARM/*.app arm64/
+        
+        # Detach DMGs
+        hdiutil detach /Volumes/QrewX86
+        hdiutil detach /Volumes/QrewARM
+        
+        # Create universal binary
+        python build_scripts/create_universal.py x86_64/*.app arm64/*.app universal/Qrew.app
+        
+        # Create universal DMG
+        python build_scripts/build_macos.py --create-dmg-only universal/Qrew.app
+        
+    - name: Upload Universal DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-installer-universal
+        path: dist/*-universal.dmg
+        if-no-files-found: warn
 
   build-linux:
     runs-on: ubuntu-latest
@@ -135,6 +192,7 @@ jobs:
           python3-dev \
           upx-ucl \
           binutils \
+          patchelf \
           libxkbcommon-x11-0 \
           libxcb-xinerama0 \
           libxcb-cursor0 \
@@ -155,7 +213,7 @@ jobs:
       run: |
         cd ${{ github.workspace }}
         export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
-        python build_scripts/build.py --clean --platform
+        python build_scripts/build.py --clean --onefile --platform
 
     - name: Check Linux build output
       run: |
@@ -174,7 +232,7 @@ jobs:
         if-no-files-found: warn
 
   release:
-    needs: [build-windows, build-macos, build-linux]
+    needs: [build-windows, build-macos, build-macos-universal, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     
@@ -221,7 +279,9 @@ jobs:
           ## Downloads
           
           - **Windows**: `Qrew-*-windows-installer.exe` or `Qrew-*-windows.zip`
-          - **macOS**: `Qrew-*-macos.dmg`
+          - **macOS Intel**: `Qrew-*-macos-x86_64.dmg`
+          - **macOS Apple Silicon**: `Qrew-*-macos-arm64.dmg`
+          - **macOS Universal**: `Qrew-*-macos-universal.dmg`
           - **Linux**: `qrew-*-linux.deb`, `qrew-*-linux.rpm`, or `qrew-*-linux.tar.gz`
           
           ## Requirements

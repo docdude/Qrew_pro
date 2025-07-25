@@ -44,7 +44,7 @@ try:
         combine_sweep_and_rta_results,
         combine_and_score_metrics,
     )
-    from .Qrew_vlc_helper_v2 import find_sweep_file, play_file_with_callback
+    from .Qrew_vlc_helper_v2 import play_sweep
     from . import Qrew_settings as qs
 except ImportError:
     from Qrew_api_helper import (
@@ -75,7 +75,7 @@ except ImportError:
         combine_sweep_and_rta_results,
         combine_and_score_metrics,
     )
-    from Qrew_vlc_helper_v2 import find_sweep_file, play_file_with_callback
+    from Qrew_vlc_helper_v2 import play_sweep
     import Qrew_settings as qs
 
 
@@ -936,23 +936,16 @@ class RTAWorker(QThread):
             self.start_collection()
 
             # Play verification sweep with callback
-            sweep_file = find_sweep_file(self.channel)
-            if sweep_file:
-                self.status_update.emit(
-                    f"Playing verification sweep for {self.channel}"
-                )
-                success = play_file_with_callback(
-                    sweep_file, completion_callback=self.on_playback_complete
-                )
-                if not success:
-                    self.error_occurred.emit(
-                        "Playback Error", "Failed to start verification sweep"
-                    )
-                    self.cleanup()
-                    return
-            else:
+            self.status_update.emit(f"Playing verification sweep for {self.channel}")
+            success = play_sweep(
+                self.channel,
+                show_gui=True,
+                backend="auto",
+                on_finished=self.on_playback_complete,  # This was previously completion_callback
+            )
+            if not success:
                 self.error_occurred.emit(
-                    "File Error", f"No sweep file found for {self.channel}"
+                    "Playback Error", "Failed to start verification sweep"
                 )
                 self.cleanup()
                 return

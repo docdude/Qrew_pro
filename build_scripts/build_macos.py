@@ -1,5 +1,5 @@
 """
-macOS-specific build script with code signing and notarization
+Enhanced macOS build script with better notarization error handling and debugging
 """
 
 import os
@@ -31,6 +31,20 @@ def run_command(cmd, timeout=1800):
         return False, "Command timed out"
 
 
+def get_build_architecture():
+    """Get the architecture we're building for"""
+    arch = os.getenv("MACOS_BUILD_ARCH", "native")
+    if arch == "native":
+        # Detect current architecture
+        try:
+            result = subprocess.run(["uname", "-m"], capture_output=True)
+            arch = result.stdout.decode('utf-8', errors='ignore').strip()
+        except Exception as e:
+            print(f"Error detecting architecture: {e}, falling back to x86_64")
+            arch = "x86_64"  # Fallback to x86_64 on error
+    return arch
+
+
 def get_best_signing_identity():
     """Get the best available signing identity, preferring Developer ID Application"""
     codesign_identity = os.getenv("CODESIGN_IDENTITY")
@@ -47,20 +61,16 @@ def get_best_signing_identity():
     dev_id_certs = []
     for line in output.split("\n"):
         if "Developer ID Application" in line:
-            # Parse line like: "  3) 9B48A1831C9E0C0F30F4DB3D5445CDF7F35D37A2 "Developer ID Application: Juan Loya (SE8KQJYGX3)""
+            # Parse certificate info
             line = line.strip()
             if ") " in line:
-                # Split on ') ' to get the part after the number
                 parts = line.split(") ", 1)
                 if len(parts) >= 2:
-                    rest = parts[
-                        1
-                    ]  # "9B48A1831C9E0C0F30F4DB3D5445CDF7F35D37A2 "Developer ID Application: Juan Loya (SE8KQJYGX3)""
-                    # Split on space to get hash and name
+                    rest = parts[1]
                     rest_parts = rest.split(" ", 1)
                     if len(rest_parts) >= 2:
-                        hash_part = rest_parts[0]  # The full hash
-                        name_part = rest_parts[1].strip('"')  # The certificate name
+                        hash_part = rest_parts[0]
+                        name_part = rest_parts[1].strip("\"'")
                         dev_id_certs.append((hash_part, name_part))
 
     if not dev_id_certs:
@@ -74,11 +84,60 @@ def get_best_signing_identity():
     return best_cert[0]  # Return the full hash
 
 
-def sign_app_bundle():
-    """Code sign the macOS app bundle"""
-    app_path = DIST_DIR / f"{APP_NAME}.app"
+def create_enhanced_entitlements():
+    """Create enhanced entitlements for notarization"""
+    entitlements_content = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Enable Hardened Runtime -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    
+    <!-- Network access -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    
+    <!-- File system access -->
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    
+    <!-- Audio access (for VLC) -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    
+    <!-- Camera access (if needed) -->
+    <key>com.apple.security.device.camera</key>
+    <false/>
+</dict>
+</plist>"""
+
+    entitlements_path = ROOT_DIR / "assets" / "entitlements.plist"
+    entitlements_path.parent.mkdir(exist_ok=True)
+
+    with open(entitlements_path, "w") as f:
+        f.write(entitlements_content)
+
+    print(f"Created enhanced entitlements: {entitlements_path}")
+    return entitlements_path
+
+
+def sign_app_bundle(app_path, onefile=False):
+    """Code sign the macOS app bundle or executable with enhanced options"""
     if not app_path.exists():
-        print("ERROR: App bundle not found for signing")
+        print(f"ERROR: App/executable not found for signing: {app_path}")
         return False
 
     codesign_identity = get_best_signing_identity()
@@ -86,42 +145,43 @@ def sign_app_bundle():
         print("INFO: No suitable signing identity found, skipping signing")
         return True
 
-    print(f"Signing app bundle with identity: {codesign_identity}")
+    print(
+        f"Signing {'executable' if onefile else 'app bundle'} with identity: {codesign_identity}"
+    )
 
-    # Prepare signing command
-    entitlements_path = ROOT_DIR / "assets" / "entitlements.plist"
+    # Create enhanced entitlements
+    entitlements_path = create_enhanced_entitlements()
 
+    # Sign with hardened runtime and proper entitlements
     sign_cmd = [
         "codesign",
-        "--deep",
         "--force",
         "--verify",
         "--verbose",
+        "--timestamp",
         "--options",
         "runtime",
+        "--entitlements",
+        str(entitlements_path),
         "--sign",
         codesign_identity,
     ]
 
-    # Add entitlements if available
-    if entitlements_path.exists():
-        sign_cmd.extend(["--entitlements", str(entitlements_path)])
-        print(f"Using entitlements: {entitlements_path}")
-    else:
-        print("WARNING: entitlements.plist not found, signing without entitlements")
+    if not onefile:
+        sign_cmd.insert(1, "--deep")
 
     # Add the app path
     sign_cmd.append(str(app_path))
 
-    # Sign the app bundle
+    # Sign the app/executable
     success, output = run_command(sign_cmd)
     if not success:
         print("ERROR: Code signing failed")
         return False
 
-    print("SUCCESS: App bundle signed")
+    print(f"SUCCESS: {'Executable' if onefile else 'App bundle'} signed")
 
-    # Verify the signature
+    # Verify the signature with more details
     verify_cmd = [
         "codesign",
         "--verify",
@@ -133,86 +193,21 @@ def sign_app_bundle():
     success, output = run_command(verify_cmd)
     if success:
         print("SUCCESS: Code signature verified")
+
+        # Also check entitlements
+        entitlements_cmd = [
+            "codesign",
+            "--display",
+            "--entitlements",
+            "-",
+            str(app_path),
+        ]
+        run_command(entitlements_cmd)
+
     else:
         print("WARNING: Code signature verification failed")
 
     return True
-
-
-def create_dmg():
-    """Create DMG file"""
-    print("Creating DMG installer...")
-
-    app_path = DIST_DIR / f"{APP_NAME}.app"
-    dmg_path = DIST_DIR / f"{APP_NAME}-{APP_VERSION}-macos.dmg"
-
-    if not app_path.exists():
-        print("ERROR: .app bundle not found for DMG creation")
-        return False
-
-    # Remove existing DMG
-    if dmg_path.exists():
-        dmg_path.unlink()
-
-    # Create DMG configuration
-    dmg_config = create_dmg_config()
-    config_path = BUILD_DIR / "dmg_config.py"
-    config_path.parent.mkdir(exist_ok=True)
-
-    with open(config_path, "w") as f:
-        f.write(dmg_config)
-
-    print(f"Creating DMG: {dmg_path}")
-
-    # Build DMG using dmgbuild
-    cmd = ["dmgbuild", "-s", str(config_path), APP_NAME, str(dmg_path)]
-    success, output = run_command(cmd, timeout=600)
-
-    # Cleanup config file
-    if config_path.exists():
-        config_path.unlink()
-
-    if success and dmg_path.exists():
-        print(f"SUCCESS: DMG created: {dmg_path}")
-        return True
-    else:
-        print("ERROR: Failed to create DMG")
-        return False
-
-
-def sign_dmg():
-    """Sign the DMG file"""
-    dmg_files = list(DIST_DIR.glob("*.dmg"))
-    if not dmg_files:
-        print("ERROR: No DMG file found for signing")
-        return False
-
-    dmg_path = dmg_files[0]
-
-    codesign_identity = get_best_signing_identity()
-    if not codesign_identity:
-        print("INFO: No suitable signing identity found, skipping DMG signing")
-        return True
-
-    print(f"Signing DMG: {dmg_path.name}")
-
-    sign_cmd = [
-        "codesign",
-        "--force",
-        "--verify",
-        "--verbose",
-        "--sign",
-        codesign_identity,
-        str(dmg_path),
-    ]
-
-    success, output = run_command(sign_cmd)
-    if success:
-        print("SUCCESS: DMG signed")
-        return True
-    else:
-        print("ERROR: DMG signing failed")
-        return False
 
 
 def check_notarization_setup():
@@ -236,7 +231,7 @@ def check_notarization_setup():
 
 
 def notarize_dmg():
-    """Submit DMG for notarization"""
+    """Submit DMG for notarization with better error handling"""
     dmg_files = list(DIST_DIR.glob("*.dmg"))
     if not dmg_files:
         print("ERROR: No DMG file found for notarization")
@@ -246,11 +241,7 @@ def notarize_dmg():
 
     if not check_notarization_setup():
         print("INFO: Skipping notarization - credentials not configured")
-        print("INFO: To enable notarization, set environment variables:")
-        print('      export APPLE_ID="your-apple-id@example.com"')
-        print('      export APPLE_ID_PASSWORD="your-app-specific-password"')
-        print('      export APPLE_TEAM_ID="YOUR_TEAM_ID"')
-        return False  # Return False so we know notarization was skipped
+        return False
 
     apple_id = os.getenv("APPLE_ID")
     apple_id_password = os.getenv("APPLE_ID_PASSWORD")
@@ -271,22 +262,224 @@ def notarize_dmg():
         "--team-id",
         team_id,
         "--wait",
+        "--timeout",
+        "3600s",  # 1 hour timeout
     ]
 
-    success, output = run_command(notarize_cmd, timeout=2400)  # 40 minute timeout
+    success, output = run_command(notarize_cmd, timeout=3600)
+
+    # Parse the output to get submission ID and status
+    submission_id = None
+    status = "Unknown"
+
+    for line in output.split("\n"):
+        if "id:" in line and not "team-id" in line:
+            submission_id = line.split("id:")[1].strip()
+        elif "status:" in line:
+            status = line.split("status:")[1].strip()
+
+    print(f"Notarization status: {status}")
+
+    if status == "Accepted":
+        print("SUCCESS: DMG notarized successfully")
+        return True
+    elif status == "Invalid":
+        print("ERROR: Notarization failed - getting detailed log...")
+        if submission_id:
+            get_notarization_log(submission_id, apple_id, apple_id_password, team_id)
+        return False
+    else:
+        print(f"ERROR: Notarization failed with status: {status}")
+        return False
+
+
+def get_notarization_log(submission_id, apple_id, password, team_id):
+    """Get detailed notarization log"""
+    print(f"Fetching notarization log for submission {submission_id}...")
+
+    log_cmd = [
+        "xcrun",
+        "notarytool",
+        "log",
+        submission_id,
+        "--apple-id",
+        apple_id,
+        "--password",
+        password,
+        "--team-id",
+        team_id,
+    ]
+
+    success, output = run_command(log_cmd)
     if success:
-        print("SUCCESS: DMG notarized")
+        print("=== NOTARIZATION LOG ===")
+        print(output)
+        print("=== END LOG ===")
+
+        # Parse common issues
+        if "DYLIB_INSTALL_NAME" in output:
+            print("\n💡 ISSUE: Dynamic library paths issue")
+            print("   Solution: Libraries need proper install names")
+        elif "codesign" in output.lower() and "invalid" in output.lower():
+            print("\n💡 ISSUE: Code signing problem")
+            print("   Solution: Some binaries aren't properly signed")
+        elif "entitlements" in output.lower():
+            print("\n💡 ISSUE: Entitlements problem")
+            print("   Solution: Check entitlements.plist")
+    else:
+        print("Failed to get notarization log")
+
+
+def create_dmg(onefile=False):
+    """Create DMG file with proper structure"""
+    print("Creating DMG installer...")
+
+    arch = get_build_architecture()
+
+    if onefile:
+        exe_path = DIST_DIR / APP_NAME
+        if not exe_path.exists():
+            print("ERROR: Executable not found for DMG creation")
+            return False
+
+        # Create a temporary .app bundle for DMG
+        temp_app = DIST_DIR / f"{APP_NAME}.app"
+        create_minimal_app_bundle(exe_path, temp_app)
+        app_path = temp_app
+    else:
+        app_path = DIST_DIR / f"{APP_NAME}.app"
+        if not app_path.exists():
+            print("ERROR: .app bundle not found for DMG creation")
+            return False
+
+    dmg_path = DIST_DIR / f"{APP_NAME}-{APP_VERSION}-macos-{arch}.dmg"
+
+    # Remove existing DMG
+    if dmg_path.exists():
+        dmg_path.unlink()
+
+    # Create DMG configuration
+    dmg_config = create_dmg_config(onefile=onefile)
+    config_path = BUILD_DIR / "dmg_config.py"
+    config_path.parent.mkdir(exist_ok=True)
+
+    with open(config_path, "w") as f:
+        f.write(dmg_config)
+
+    print(f"Creating DMG: {dmg_path}")
+
+    # Build DMG using dmgbuild
+    cmd = ["dmgbuild", "-s", str(config_path), APP_NAME, str(dmg_path)]
+    success, output = run_command(cmd, timeout=600)
+
+    # Cleanup
+    if config_path.exists():
+        config_path.unlink()
+    if onefile and temp_app.exists():
+        shutil.rmtree(temp_app)
+
+    if success and dmg_path.exists():
+        print(f"SUCCESS: DMG created: {dmg_path}")
         return True
     else:
-        print("ERROR: Notarization failed")
+        print("ERROR: Failed to create DMG")
+        return False
+
+
+def create_minimal_app_bundle(exe_path, app_path):
+    """Create minimal app bundle for single-file executable"""
+    print(f"Creating minimal app bundle at {app_path}")
+
+    # Create directory structure
+    contents_dir = app_path / "Contents"
+    macos_dir = contents_dir / "MacOS"
+    resources_dir = contents_dir / "Resources"
+
+    macos_dir.mkdir(parents=True, exist_ok=True)
+    resources_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy executable
+    shutil.copy2(exe_path, macos_dir / APP_NAME)
+
+    # Copy icon if exists
+    icns_path = ICONS_DIR / "Qrew.icns"
+    if icns_path.exists():
+        shutil.copy2(icns_path, resources_dir / "Qrew.icns")
+
+    # Create Info.plist
+    info_plist = get_macos_bundle_info()
+    plist_content = generate_info_plist(info_plist)
+
+    with open(contents_dir / "Info.plist", "w") as f:
+        f.write(plist_content)
+
+    # Make executable
+    (macos_dir / APP_NAME).chmod(0o755)
+
+
+def generate_info_plist(info_dict):
+    """Generate Info.plist XML content"""
+    plist = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+"""
+
+    for key, value in info_dict.items():
+        if isinstance(value, bool):
+            plist += f"    <key>{key}</key>\n    <{str(value).lower()}/>\n"
+        elif isinstance(value, int):
+            plist += f"    <key>{key}</key>\n    <integer>{value}</integer>\n"
+        else:
+            plist += f"    <key>{key}</key>\n    <string>{value}</string>\n"
+
+    plist += """</dict>
+</plist>"""
+
+    return plist
+
+
+def sign_dmg():
+    """Sign the DMG file"""
+    dmg_files = list(DIST_DIR.glob("*.dmg"))
+    if not dmg_files:
+        print("ERROR: No DMG file found for signing")
+        return False
+
+    dmg_path = dmg_files[0]
+
+    codesign_identity = get_best_signing_identity()
+    if not codesign_identity:
+        print("INFO: No suitable signing identity found, skipping DMG signing")
+        return True
+
+    print(f"Signing DMG: {dmg_path.name}")
+
+    sign_cmd = [
+        "codesign",
+        "--force",
+        "--verify",
+        "--verbose",
+        "--timestamp",
+        "--sign",
+        codesign_identity,
+        str(dmg_path),
+    ]
+
+    success, output = run_command(sign_cmd)
+    if success:
+        print("SUCCESS: DMG signed")
+        return True
+    else:
+        print("ERROR: DMG signing failed")
         return False
 
 
 def staple_dmg(notarization_successful):
     """Staple the notarization to the DMG"""
     if not notarization_successful:
-        print("INFO: Skipping stapling - notarization was not performed or failed")
-        return True  # Don't fail the build for this
+        print("INFO: Skipping stapling - notarization was not successful")
+        return True
 
     dmg_files = list(DIST_DIR.glob("*.dmg"))
     if not dmg_files:
@@ -302,39 +495,35 @@ def staple_dmg(notarization_successful):
 
     if success:
         print("SUCCESS: Notarization stapled to DMG")
-
-        # Verify stapling
-        verify_cmd = ["xcrun", "stapler", "validate", str(dmg_path)]
-        success, output = run_command(verify_cmd)
-        if success:
-            print("SUCCESS: Stapled notarization verified")
-        else:
-            print("WARNING: Could not verify stapled notarization")
-
         return True
     else:
         print("ERROR: Failed to staple notarization")
         return False
 
 
-def create_dmg_config():
+def create_dmg_config(onefile=False):
     """Generate DMG configuration"""
     # Calculate app size dynamically
-    app_path = DIST_DIR / f"{APP_NAME}.app"
-    if app_path.exists():
-        result = subprocess.run(
-            ["du", "-sk", str(app_path)], capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            app_size_kb = int(result.stdout.split()[0])
-            # Add 50% padding and convert to MB
-            dmg_size_mb = int((app_size_kb * 1.5) / 1024)
-            # Minimum 200MB, maximum 2GB
-            dmg_size = max(200, min(2048, dmg_size_mb))
+    if onefile:
+        app_path = DIST_DIR / APP_NAME
+        if app_path.exists():
+            app_size_kb = app_path.stat().st_size / 1024
+            dmg_size = max(200, int((app_size_kb * 2) / 1024))  # Double size, min 200MB
         else:
-            dmg_size = 400  # Default fallback
+            dmg_size = 200
     else:
-        dmg_size = 400  # Default fallback
+        app_path = DIST_DIR / f"{APP_NAME}.app"
+        if app_path.exists():
+            result = subprocess.run(
+                ["du", "-sk", str(app_path)], capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                app_size_kb = int(result.stdout.split()[0])
+                dmg_size = max(200, min(2048, int((app_size_kb * 1.5) / 1024)))
+            else:
+                dmg_size = 400
+        else:
+            dmg_size = 400
 
     return f"""# DMG build configuration
 import os
@@ -377,37 +566,45 @@ if license_path.exists():
         "licenses": {{
             "en_US": str(license_path),
         }},
-        "show-license": True,
     }}
 """
 
 
-def build_macos_installer():
-    """Build complete macOS installer with signing and notarization"""
+def build_macos_installer(onefile=False):
+    """Build complete macOS installer with enhanced notarization"""
     print("=" * 60)
     print("BUILDING MACOS INSTALLER")
     print("=" * 60)
 
-    app_path = DIST_DIR / f"{APP_NAME}.app"
-    if not app_path.exists():
-        print("ERROR: .app bundle not found. Run PyInstaller first.")
-        return False
+    arch = get_build_architecture()
+    print(f"Building for architecture: {arch}")
+
+    if onefile:
+        app_path = DIST_DIR / APP_NAME
+        if not app_path.exists():
+            print("ERROR: Executable not found. Run PyInstaller first.")
+            return False
+    else:
+        app_path = DIST_DIR / f"{APP_NAME}.app"
+        if not app_path.exists():
+            print("ERROR: .app bundle not found. Run PyInstaller first.")
+            return False
 
     success_count = 0
     total_steps = 5
     notarization_successful = False
 
-    # Step 1: Sign the app bundle
-    print("\n1. Signing app bundle...")
-    if sign_app_bundle():
+    # Step 1: Sign the app bundle/executable
+    print(f"\n1. Signing {'executable' if onefile else 'app bundle'}...")
+    if sign_app_bundle(app_path, onefile=onefile):
         success_count += 1
-        print("✓ App bundle signing completed")
+        print(f"✓ {'Executable' if onefile else 'App bundle'} signing completed")
     else:
-        print("✗ App bundle signing failed")
+        print(f"✗ {'Executable' if onefile else 'App bundle'} signing failed")
 
     # Step 2: Create DMG
     print("\n2. Creating DMG...")
-    if create_dmg():
+    if create_dmg(onefile=onefile):
         success_count += 1
         print("✓ DMG creation completed")
     else:
@@ -429,7 +626,7 @@ def build_macos_installer():
         notarization_successful = True
         print("✓ DMG notarization completed")
     else:
-        print("✗ DMG notarization failed or skipped")
+        print("✗ DMG notarization failed")
 
     # Step 5: Staple notarization
     print("\n5. Stapling notarization...")
@@ -438,7 +635,7 @@ def build_macos_installer():
             success_count += 1
             print("✓ Notarization stapling completed")
         else:
-            print("- Stapling skipped (no notarization)")
+            print("- Stapling skipped (notarization failed)")
     else:
         print("✗ Notarization stapling failed")
 
@@ -446,6 +643,8 @@ def build_macos_installer():
     print("\n" + "=" * 60)
     print("MACOS BUILD SUMMARY")
     print("=" * 60)
+    print(f"Architecture: {arch}")
+    print(f"Build mode: {'onefile' if onefile else 'app bundle'}")
     print(f"Completed steps: {success_count}/{total_steps}")
 
     dmg_files = list(DIST_DIR.glob("*.dmg"))
@@ -457,7 +656,7 @@ def build_macos_installer():
         if success_count >= 4:
             print("✓ DMG is signed and notarized")
         elif success_count >= 3:
-            print("✓ DMG is signed (notarization skipped)")
+            print("✓ DMG is signed (notarization failed - see logs above)")
         else:
             print("⚠ DMG created but may not be properly signed")
 
@@ -466,6 +665,30 @@ def build_macos_installer():
 
 if __name__ == "__main__":
     import sys
+    import argparse
 
-    success = build_macos_installer()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--onefile", action="store_true", help="Build for single-file executable"
+    )
+    parser.add_argument(
+        "--create-dmg-only", help="Create DMG from existing app", metavar="APP_PATH"
+    )
+    args = parser.parse_args()
+
+    if args.create_dmg_only:
+        # Special mode for creating universal DMG
+        app_path = Path(args.create_dmg_only)
+        if app_path.exists():
+            # Sign the universal app first
+            sign_app_bundle(app_path, onefile=False)
+            # Create DMG
+            os.environ["MACOS_BUILD_ARCH"] = "universal"
+            create_dmg(onefile=False)
+            sys.exit(0)
+        else:
+            print(f"ERROR: App not found: {app_path}")
+            sys.exit(1)
+
+    success = build_macos_installer(onefile=args.onefile)
     sys.exit(0 if success else 1)
