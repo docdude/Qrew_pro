@@ -9,11 +9,10 @@ from gevent.pywsgi import WSGIServer
 
 try:
     from .Qrew_api_helper import get_last_error, get_last_warning
-    from .Qrew_vlc_helper_v2 import play_file, find_sweep_file
+    from .Qrew_vlc_helper_v2 import play_sweep
 except ImportError:
     from Qrew_api_helper import get_last_error, get_last_warning
-    from Qrew_vlc_helper_v2 import play_file, find_sweep_file
-
+    from Qrew_vlc_helper_v2 import play_sweep
 
 status_log = deque(maxlen=100)
 
@@ -214,6 +213,22 @@ rta_coordinator = RTAVerificationCoordinator()
 app = Flask(__name__)
 
 
+# Server manager class to avoid global variables
+class ServerManager:
+    def __init__(self):
+        self.http_server = None
+
+    def stop(self, timeout=2.0):
+        if self.http_server and not self.http_server.closed:
+            print("🛑  Stopping REW-API server …")
+            self.http_server.stop(timeout)
+            self.http_server = None
+
+
+# Create a singleton instance
+server_manager = ServerManager()
+
+
 @app.route("/rew-status", methods=["POST"])
 def handle_status():
     msg = request.data.decode().strip('"')
@@ -296,11 +311,9 @@ def handle_status():
         ch = coordinator.channel
         pos = coordinator.position
         if ch and pos is not None:
-            sweep_file = find_sweep_file(ch)
-            if sweep_file:
-                print(f"Playing sweep file for {ch}: {sweep_file}")
-                play_file(sweep_file)
-                message_bridge.emit_message(f"Playing sweep for {ch}")
+            print(f"Playing sweep for {ch}")
+            play_sweep(ch)  # Use play_sweep directly with the channel
+            message_bridge.emit_message(f"Playing sweep for {ch}")
 
     return "", 200
 
@@ -539,41 +552,46 @@ def test_endpoints():
         return f"Error: {e}", 500
 
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint to verify Flask server is running"""
+    return (
+        jsonify(
+            {
+                "status": "healthy",
+                "service": "qrew-flask-server",
+                "timestamp": time.time(),
+            }
+        ),
+        200,
+    )
+
+
 # ------------------------------------------------------------------
 # public helper so other modules (MainWindow / signal handler) can
 # shut the server down cleanly
 # ------------------------------------------------------------------
 def stop_flask_server(timeout: float = 2.0):
     """
-    Ask gevent’s WSGIServer to shut down and wait (≤ *timeout* s).
+    Ask gevent's WSGIServer to shut down and wait (≤ *timeout* s).
     Safe to call more than once.
     """
-    global http_server
-    srv = http_server
-    http_server = None  # prevent double-stop
-
-    if srv and not srv.closed:
-        print("🛑  Stopping REW-API server …")
-        srv.stop(timeout)
+    # Use server_manager instead of global http_server
+    server_manager.stop(timeout)
 
 
 def run_flask_server():
     import logging
 
-    global http_server
-    # Debug/Development
-    # app.run(host="0.0.0.0", port=5555, debug=False, use_reloader=False, threaded=True)
-
-    # app.config['ENV'] = 'production'
     # Production
     app.config["ENV"] = "production"
     app.config["DEBUG"] = False
 
-    http_server = WSGIServer(
-        ("0.0.0.0", 5555),
+    server_manager.http_server = WSGIServer(
+        ("127.0.0.1", 5555),
         app,
         log=logging.getLogger("http_server"),
         error_log=logging.getLogger("http_server_error"),
     )
     print("✅  REW-API server listening on http://127.0.0.1:5555")
-    http_server.serve_forever()
+    server_manager.http_server.serve_forever()

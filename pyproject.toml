@@ -32,6 +32,7 @@ dependencies = [
     "pandas>=1.2.0",
     "colour>=0.1.5",
     "gevent>=22.10.2",
+    "pyobjc>=7.0.0; platform_system == 'Darwin'",
     "python-vlc>=3.0.0; platform_system != 'Windows'",
     "python-vlc>=3.0.0; platform_system == 'Windows'",
 ]

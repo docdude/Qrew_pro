@@ -40,25 +40,89 @@ def run_command(cmd, cwd=None):
         return False
 
 
-def optimize_linux_build():
+def build_linux_installer(onefile=False):
+    """Build Linux packages"""
+    print("Building Linux packages...")
+
+    if onefile:
+        exe_path = DIST_DIR / APP_NAME
+        if not exe_path.exists():
+            print("ERROR: Linux executable not found. Run PyInstaller first.")
+            return False
+    else:
+        app_dir = DIST_DIR / APP_NAME
+        if not app_dir.exists():
+            print("ERROR: Linux app directory not found. Run PyInstaller first.")
+            return False
+
+    success = True
+
+    # Optimize BEFORE building packages
+    if optimize_linux_build(onefile):
+        print("SUCCESS: Linux build optimized")
+
+    # Build packages
+    if build_deb_package(onefile):
+        print("SUCCESS: .deb package created")
+    else:
+        print("WARNING: .deb package creation failed")
+        success = False
+
+    # Build .rpm package - only try if rpmbuild is available
+    try:
+        subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
+        if build_rpm_package(onefile):
+            print("SUCCESS: .rpm package created")
+        else:
+            print("WARNING: .rpm package creation failed")
+    except:
+        print("INFO: rpmbuild not available, skipping .rpm creation")
+
+    # Create tarball
+    if create_tarball(onefile):
+        print("SUCCESS: tar.gz archive created")
+    else:
+        print("WARNING: tar.gz creation failed")
+
+    return success
+
+
+def optimize_linux_build(onefile=False):
     """Remove unnecessary files and optimize the Linux build"""
     print("Optimizing Linux build...")
+
+    if onefile:
+        exe_path = DIST_DIR / APP_NAME
+        if exe_path.exists():
+            # For single file, just strip if possible
+            try:
+                subprocess.run(
+                    ["strip", "--strip-unneeded", str(exe_path)],
+                    check=False,
+                    capture_output=True,
+                )
+                print("SUCCESS: Stripped executable")
+            except:
+                print("INFO: Could not strip executable")
+        return True
+
     app_dir = DIST_DIR / APP_NAME
     if not app_dir.exists():
         return False
 
     # Only remove truly unnecessary files
     cleanup_patterns = [
-        "share/doc",
-        "share/man",
-        "include",
-        "*.debug",
-        "*.a",  # Static libraries
-        "*.la",  # Libtool files
         "**/__pycache__",
         "**/*.pyc",
-        "lib*/libQt5Test*",  # Test libraries are safe to remove
-        "lib*/libQt5Designer*",  # Designer libraries not needed
+        "**/*.pyo",
+        "**/*.debug",
+        "**/*.a",  # Static libraries
+        "**/*.la",  # Libtool files
+        "lib*/libQt5Test*",  # Test libraries
+        "lib*/libQt5Designer*",  # Designer libraries
+        "include",  # Header files
+        "share/doc",
+        "share/man",
     ]
 
     removed_size = 0
@@ -70,8 +134,6 @@ def optimize_linux_build():
                     path.unlink()
                     removed_size += size
                 elif path.is_dir():
-                    import os
-
                     dir_size = sum(
                         f.stat().st_size for f in path.rglob("*") if f.is_file()
                     )
@@ -82,15 +144,10 @@ def optimize_linux_build():
 
     print(f"SUCCESS: Removed {removed_size / (1024*1024):.1f} MB of unnecessary files")
 
-    # Strip binaries (this is safe)
+    # Strip binaries
     try:
-        for binary in app_dir.rglob("*"):
-            if (
-                binary.is_file()
-                and binary.suffix in [".so"]
-                and not binary.name.endswith(".py")
-                and binary.exists()
-            ):  # Check exists before stripping
+        for binary in app_dir.rglob("*.so*"):
+            if binary.is_file() and not binary.is_symlink():
                 try:
                     subprocess.run(
                         ["strip", "--strip-unneeded", str(binary)],
@@ -99,54 +156,14 @@ def optimize_linux_build():
                     )
                 except:
                     pass
-        print("SUCCESS: Stripped debug symbols from binaries")
+        print("SUCCESS: Stripped debug symbols from libraries")
     except Exception as e:
         print(f"WARNING: Could not strip binaries: {e}")
 
     return True
 
 
-def build_linux_installer():
-    print("Building Linux packages...")
-    app_dir = DIST_DIR / APP_NAME
-    if not app_dir.exists():
-        print("ERROR: Linux app directory not found. Run PyInstaller first.")
-        return False
-
-    success = True
-
-    # Build packages BEFORE optimizing
-    if build_deb_package():
-        print("SUCCESS: .deb package created")
-    else:
-        print("WARNING: .deb package creation failed")
-        success = False
-
-    # Build .rpm package - only try if rpmbuild is available
-    try:
-        subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
-        if build_rpm_package():
-            print("SUCCESS: .rpm package created")
-        else:
-            print("WARNING: .rpm package creation failed")
-            # Don't fail overall build
-    except:
-        print("INFO: rpmbuild not available, skipping .rpm creation")
-
-    # Create tarball
-    if create_tarball():
-        print("SUCCESS: tar.gz archive created")
-    else:
-        print("WARNING: tar.gz creation failed")
-
-    # NOW optimize after all packages are created
-    if optimize_linux_build():
-        print("SUCCESS: Linux build optimized")
-
-    return success
-
-
-def build_deb_package():
+def build_deb_package(onefile=False):
     """Build .deb package"""
     print("Building .deb package...")
 
@@ -154,7 +171,7 @@ def build_deb_package():
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
 
-    create_deb_structure(pkg_dir)
+    create_deb_structure(pkg_dir, onefile)
 
     try:
         cmd = [
@@ -169,11 +186,101 @@ def build_deb_package():
         return False
 
 
-def build_rpm_package():
+def create_deb_structure(pkg_dir, onefile=False):
+    """Create .deb package structure"""
+    print("Creating .deb structure...")
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create DEBIAN control files
+    debian_dir = pkg_dir / "DEBIAN"
+    debian_dir.mkdir(exist_ok=True)
+
+    control_content = f"""Package: {APP_NAME.lower()}
+Version: {APP_VERSION}
+Section: sound
+Priority: optional
+Architecture: amd64
+Depends: libc6, libpython3.10, vlc
+Maintainer: {APP_AUTHOR}
+Description: {APP_DESCRIPTION}
+ Automated loudspeaker measurement system using REW API.
+ Provides advanced measurement and analysis capabilities.
+"""
+    with open(debian_dir / "control", "w") as f:
+        f.write(control_content)
+
+    # Copy application files
+    app_install_dir = pkg_dir / "opt" / APP_NAME
+    app_install_dir.mkdir(parents=True, exist_ok=True)
+
+    if onefile:
+        # Single executable file
+        exe_path = DIST_DIR / APP_NAME
+        if exe_path.exists():
+            shutil.copy2(exe_path, app_install_dir / APP_NAME)
+            (app_install_dir / APP_NAME).chmod(0o755)
+    else:
+        # Directory structure
+        app_source = DIST_DIR / APP_NAME
+        if app_source.exists():
+            # Copy contents, not the directory itself
+            for item in app_source.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, app_install_dir)
+                elif item.is_dir():
+                    shutil.copytree(
+                        item, app_install_dir / item.name, dirs_exist_ok=True
+                    )
+
+    # Add icon file
+    icon_dir = pkg_dir / "usr" / "share" / "icons" / "hicolor" / "scalable" / "apps"
+    icon_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find and copy icon
+    icon_src = get_icon_for_platform()
+    if icon_src and icon_src.exists():
+        shutil.copy2(icon_src, icon_dir / "Qrew.png")
+        # Also copy to app directory
+        shutil.copy2(icon_src, app_install_dir / "Qrew.png")
+
+    # Create desktop entry
+    desktop_dir = pkg_dir / "usr" / "share" / "applications"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+
+    desktop_content = f"""[Desktop Entry]
+Name={APP_NAME}
+Comment={APP_DESCRIPTION}
+Exec=/opt/{APP_NAME}/{APP_NAME}
+Icon=Qrew
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Engineering;
+StartupWMClass={APP_NAME}
+"""
+    with open(desktop_dir / f"{APP_NAME.lower()}.desktop", "w") as f:
+        f.write(desktop_content)
+
+    # Create launcher script
+    bin_dir = pkg_dir / "usr" / "local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    launcher_content = f"""#!/bin/bash
+export LD_LIBRARY_PATH=/opt/{APP_NAME}:$LD_LIBRARY_PATH
+cd /opt/{APP_NAME}
+./{APP_NAME} "$@"
+"""
+    launcher_file = bin_dir / APP_NAME.lower()
+    with open(launcher_file, "w") as f:
+        f.write(launcher_content)
+    launcher_file.chmod(0o755)
+
+
+def build_rpm_package(onefile=False):
+    """Build .rpm package"""
     print("Building .rpm package...")
     try:
         subprocess.run(["rpmbuild", "--version"], check=True, capture_output=True)
-        return build_rpm_with_rpmbuild()
+        return build_rpm_with_rpmbuild(onefile)
     except:
         print("INFO: rpmbuild not available, trying alien conversion...")
         return build_rpm_with_alien()
@@ -213,19 +320,19 @@ def build_rpm_with_alien():
         return False
 
 
-def build_rpm_with_rpmbuild():
-    """Original rpmbuild method"""
+def build_rpm_with_rpmbuild(onefile=False):
+    """Build RPM using rpmbuild"""
     print("Building .rpm package with rpmbuild...")
     rpm_build = BUILD_DIR / "rpm_build"
     for subdir in ["SPECS", "SOURCES", "BUILD", "RPMS", "SRPMS"]:
         (rpm_build / subdir).mkdir(parents=True, exist_ok=True)
 
-    spec_content = create_rpm_spec()
+    spec_content = create_rpm_spec(onefile)
     spec_file = rpm_build / "SPECS" / f"{APP_NAME.lower()}.spec"
     with open(spec_file, "w") as f:
         f.write(spec_content)
 
-    if not create_rpm_sources(rpm_build):
+    if not create_rpm_sources(rpm_build, onefile):
         return False
 
     try:
@@ -242,6 +349,7 @@ def build_rpm_with_rpmbuild():
         return False
 
 
+<<<<<<< HEAD
 def create_deb_structure(pkg_dir):
     print("Creating .deb structure...")
     pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -351,6 +459,9 @@ cd /opt/{APP_NAME}
 
 
 def create_rpm_spec():
+=======
+def create_rpm_spec(onefile=False):
+>>>>>>> 80fd89d1b487b52d9852eea9661d354a15efab56
     """Create RPM spec file content"""
     return f"""Name: {APP_NAME.lower()}
 Version: {APP_VERSION}
@@ -389,7 +500,7 @@ cat > %{{buildroot}}/usr/share/applications/{APP_NAME.lower()}.desktop << 'EOF'
 Name={APP_NAME}
 Comment={APP_DESCRIPTION}
 Exec=/opt/{APP_NAME}/{APP_NAME}
-Icon=/opt/{APP_NAME}/icon.png
+Icon=/opt/{APP_NAME}/Qrew.png
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Engineering;
@@ -406,19 +517,27 @@ EOF
 """
 
 
-def create_rpm_sources(rpm_build):
+def create_rpm_sources(rpm_build, onefile=False):
     """Create source tarball for RPM"""
     print("Creating RPM source tarball...")
 
     sources_dir = rpm_build / "SOURCES"
-    app_dir = DIST_DIR / APP_NAME
+
+    if onefile:
+        app_source = DIST_DIR / APP_NAME
+    else:
+        app_source = DIST_DIR / APP_NAME
 
     # Create a directory with the expected name
     temp_dir = BUILD_DIR / f"{APP_NAME.lower()}-{APP_VERSION}"
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
 
-    shutil.copytree(app_dir, temp_dir)
+    if onefile:
+        temp_dir.mkdir(parents=True)
+        shutil.copy2(app_source, temp_dir / APP_NAME)
+    else:
+        shutil.copytree(app_source, temp_dir)
 
     tarball_name = f"{APP_NAME.lower()}-{APP_VERSION}.tar.gz"
     cmd = [
@@ -438,33 +557,54 @@ def create_rpm_sources(rpm_build):
     return result
 
 
-def create_tarball():
+def create_tarball(onefile=False):
     """Create a tar.gz distribution"""
     print("Creating tar.gz archive...")
 
-    app_dir = DIST_DIR / APP_NAME
-    tarball_path = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.tar.gz"
+    if onefile:
+        source = DIST_DIR / APP_NAME
+        tarball_path = (
+            DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux-portable.tar.gz"
+        )
 
-    try:
-        cmd = [
-            "tar",
-            "-czf",
-            str(tarball_path),
-            "-C",
-            str(app_dir.parent),
-            app_dir.name,
-        ]
-        return run_command(cmd, cwd=ROOT_DIR)
-    except Exception as e:
-        print(f"ERROR: tar.gz creation failed: {e}")
-        return False
+        try:
+            cmd = ["tar", "-czf", str(tarball_path), "-C", str(DIST_DIR), APP_NAME]
+            return run_command(cmd, cwd=ROOT_DIR)
+        except Exception as e:
+            print(f"ERROR: tar.gz creation failed: {e}")
+            return False
+    else:
+        app_dir = DIST_DIR / APP_NAME
+        tarball_path = DIST_DIR / f"{APP_NAME.lower()}-{APP_VERSION}-linux.tar.gz"
+
+        try:
+            cmd = [
+                "tar",
+                "-czf",
+                str(tarball_path),
+                "-C",
+                str(app_dir.parent),
+                app_dir.name,
+            ]
+            return run_command(cmd, cwd=ROOT_DIR)
+        except Exception as e:
+            print(f"ERROR: tar.gz creation failed: {e}")
+            return False
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--onefile", action="store_true", help="Build for single-file executable"
+    )
+    args = parser.parse_args()
+
     if not ensure_directories():
         sys.exit(1)
 
-    if build_linux_installer():
+    if build_linux_installer(onefile=args.onefile):
         print("SUCCESS: Linux packages build completed")
     else:
         print("ERROR: Linux packages build failed")

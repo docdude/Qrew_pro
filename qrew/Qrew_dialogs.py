@@ -40,6 +40,10 @@ try:
     from .Qrew_messagebox import QrewMessageBox, QrewFileDialog
     from . import Qrew_settings as qs
     from .Qrew_micwidget_icons import MicPositionWidget
+    from .Qrew_vlc_helper_v2 import (
+        is_vlc_backend_locked,
+        get_available_backends,
+    )
 except ImportError:
     from Qrew_button import Button
     from Qrew_styles import (
@@ -53,9 +57,14 @@ except ImportError:
         load_high_quality_image,
     )
     from Qrew_common import SPEAKER_LABELS, SPEAKER_CONFIGS
-    from Qrew_messagebox import QrewMessageBox, QrewFileDialog
+    from Qrew_messagebox import (
+        QrewMessageBox,
+        QrewFileDialog,
+    )
     import Qrew_settings as qs
     from Qrew_micwidget_icons import MicPositionWidget
+    from Qrew_vlc_helper_v2 import is_vlc_backend_locked, get_available_backends
+
 # import Qrew_resources
 
 # expose speaker configs for MainWindow
@@ -1211,16 +1220,36 @@ class SettingsDialog(QDialog):
 
         # VLC Backend selection
         backend_layout = QHBoxLayout()
-        backend_label = QLabel("VLC Backend:")
-        backend_label.setStyleSheet("font-size: 14px; font-weight: normal;")
+        self.backend_label = QLabel("VLC Backend:")
+        self.backend_label.setStyleSheet("font-size: 14px; font-weight: normal;")
 
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(["auto", "libvlc", "subprocess"])
+
+        # Check if VLC backend is locked due to compatibility issues
+        if is_vlc_backend_locked():
+            # If locked, only show subprocess option and disable the combobox
+            self.backend_combo.addItems(["subprocess"])
+            self.backend_combo.setEnabled(False)
+            self.backend_label.setToolTip(
+                "VLC library loading failed. Using subprocess mode only.\n"
+                "This happens when the VLC architecture doesn't match Python's architecture."
+            )
+        else:
+            # Get available backends and populate the combobox
+            backends = get_available_backends()
+            self.backend_combo.addItems(backends)
+            if "auto" not in backends:
+                self.backend_combo.insertItem(0, "auto")
+
         vlc_backend = current_values.get("vlc_backend", "auto")
+        # If backend is locked, force subprocess
+        if is_vlc_backend_locked():
+            vlc_backend = "subprocess"
+
         self.backend_combo.setCurrentText(vlc_backend)
         self.backend_combo.setStyleSheet(COMBOBOX_STYLE)
 
-        backend_layout.addWidget(backend_label)
+        backend_layout.addWidget(self.backend_label)
         backend_layout.addWidget(self.backend_combo)
         backend_layout.addStretch()
         form.addLayout(backend_layout)
@@ -1338,7 +1367,13 @@ class SettingsDialog(QDialog):
             qs.set(key, cb.isChecked())
 
         # combos
-        qs.set("vlc_backend", self.backend_combo.currentText())
+        # If VLC backend is locked, ensure it stays set to subprocess
+        if is_vlc_backend_locked():
+            qs.set("vlc_backend", "subprocess")
+            # Maintain the lock flag
+            qs.set("vlc_backend_locked", True)
+        else:
+            qs.set("vlc_backend", self.backend_combo.currentText())
         qs.set("speaker_config", self.cfg_combo.currentText())
         qs.set("viz_view", self.viz_mode_combo.currentText())
         super().accept()  # close the dialog

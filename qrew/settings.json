@@ -1,10 +1,16 @@
 {
+  "vlc_backend": "subprocess",
   "show_vlc_gui": true,
   "show_tooltips": true,
   "auto_pause_on_quality_issue": false,
+<<<<<<< HEAD
   "vlc_backend": "libvlc",
+=======
+  "save_after_repeat": false,
+  "use_light_theme": false,
+>>>>>>> 80fd89d1b487b52d9852eea9661d354a15efab56
   "speaker_config": "Manual Select",
-  "save_after_repeat": true,
   "viz_view": "Sofa View",
-  "use_light_theme": true
+  "vlc_backend_locked": true,
+  "vlc_error_message": null
 }

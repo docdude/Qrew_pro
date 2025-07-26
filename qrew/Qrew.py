@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+import tempfile
 import faulthandler
 import signal
 import platform
@@ -33,7 +34,7 @@ from PyQt5.QtCore import Qt, QTimer, QSettings, QSize, QEvent, pyqtSignal
 from PyQt5.QtGui import QPixmap, QPalette, QBrush, QColor, QFont, QIcon, QPainter
 
 try:
-    from .Qrew_common import SPEAKER_LABELS
+    from .Qrew_common import SPEAKER_LABELS, TaskbarFlasher
     from . import Qrew_common
     from . import Qrew_settings as qs
 
@@ -98,11 +99,11 @@ try:
     )
 
     from .Qrew_micwidget_icons import MicPositionWidget, SofaWidget
-    from .Qrew_vlc_helper_v2 import stop_vlc_and_exit
+    from .Qrew_vlc_helper_v2 import stop_vlc_and_exit, _global_player
 
     # import Qrew_resources
 except ImportError:
-    from Qrew_common import SPEAKER_LABELS
+    from Qrew_common import SPEAKER_LABELS, TaskbarFlasher
     import Qrew_common
     import Qrew_settings as qs
 
@@ -167,15 +168,31 @@ except ImportError:
     )
 
     from Qrew_micwidget_icons import MicPositionWidget, SofaWidget
-    from Qrew_vlc_helper_v2 import stop_vlc_and_exit
+    from Qrew_vlc_helper_v2 import stop_vlc_and_exit, _global_player
 
     # import Qrew_resources
 
 
 # --- crash diagnostics -------------------------------------------------
-_CRASHLOG = os.path.join(os.path.dirname(__file__), "crash_trace.log")
+# Ensure log directory exists in frozen apps
+if getattr(sys, "frozen", False):
+    # When running as PyInstaller bundle, use a temp dir that's guaranteed to exist and be writeable
+    log_dir = os.path.join(tempfile.gettempdir(), "qrew_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    _CRASHLOG = os.path.join(log_dir, "crash_trace.log")
+else:
+    # In development mode, use the module directory
+    _CRASHLOG = os.path.join(os.path.dirname(__file__), "crash_trace.log")
+    # Make sure the directory exists
+    os.makedirs(os.path.dirname(_CRASHLOG), exist_ok=True)
+
 # append mode so multiple runs accumulate
-_fh = open(_CRASHLOG, "a", buffering=1, encoding="utf-8")
+try:
+    _fh = open(_CRASHLOG, "a", buffering=1, encoding="utf-8")
+except Exception as e:
+    print(f"Error opening crash log: {e}")
+    # Fallback to stderr
+    _fh = sys.stderr
 faulthandler.enable(file=_fh, all_threads=True)
 # optional: manual dump on SIGUSR1 (Linux/macOS)
 try:
@@ -216,17 +233,35 @@ class MainWindow(QMainWindow):
         self.bg_opacity = 0.35  # user-chosen α
         set_background_image(self)  # first fill
         # self.app_settings = qs._load()
+
+        # Get settings path directly from Qrew_settings module instead of using __file__
+        settings_path = str(qs._FILE)  # Use the path from Qrew_settings
         print(f"DEBUG: Loaded settings: {qs._load()}")
-        print(f"DEBUG: Settings file exists: {os.path.exists('settings.json')}")
+        print(f"DEBUG: Settings path: {settings_path}")
+        print(f"DEBUG: Settings file exists: {os.path.exists(settings_path)}")
         # Message tracking
         self.current_warnings = []
         self.current_errors = []
         self.last_status_message = ""
-
+        self.flasher = TaskbarFlasher(self)
         self._flash_state = False
         self._GUI_LOCKED = False
         # Add visualization dialog instance
         self.visualization_dialog = None
+
+        # Connect VLC player error signal to our error handler
+        try:
+            if hasattr(_global_player, "error_occurred") and hasattr(
+                _global_player.error_occurred, "connect"
+            ):
+                _global_player.error_occurred.connect(self.show_error_message)
+                print("Successfully connected VLC error signal")
+            else:
+                print(
+                    "VLC player error signal not available (normal for non-PyQt backends)"
+                )
+        except Exception as e:
+            print(f"Could not connect VLC error signal: {e}")
         self.compact_mic_widget = None
         self.selected_channels_for_viz = (
             set()
@@ -501,15 +536,14 @@ class MainWindow(QMainWindow):
                 border: 1px solid #333;
                 border-radius: 4px;
                 font-size: 11px;
-                font-family: monospace;
             }
         """
         )
         self.metrics_detail_label.setTextFormat(Qt.RichText)
         self.metrics_detail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.metrics_detail_label.setWordWrap(True)
-        self.metrics_detail_label.setMinimumSize(195, 140)
-        self.metrics_detail_label.setMaximumHeight(150)
+        self.metrics_detail_label.setMinimumSize(195, 160)
+        self.metrics_detail_label.setMaximumHeight(170)
         self.metrics_detail_label.setVisible(False)  # Initially hidden
 
         metrics_layout.addWidget(self.metrics_label)
@@ -784,15 +818,6 @@ class MainWindow(QMainWindow):
             widget.setEnabled(on)
 
         self.gui_lock_changed.emit(not on)
-
-        # Toggle taskbar alert based on lock state
-        if not on:  # Controls are being disabled (locked)
-            # Start flashing (0 = use system default duration)
-
-            QApplication.alert(self, 0)
-        else:  # Controls are being enabled (unlocked)
-            # Stop flashing by bringing window to front
-            QApplication.setActiveWindow(self)
 
         # extra visual cue
 
@@ -1717,14 +1742,16 @@ class MainWindow(QMainWindow):
     def handle_repeat_measurements(self, selected_measurements):
         """Handle the repeat measurement process."""
         if not Qrew_common.selected_stimulus_path:
+            message = (
+                "You must load the sweep WAV before repeating measurements.\n"
+                "Load it now?"
+            )
             if (
                 QrewMessageBox.question(
                     self,
                     "Stimulus file required",
-                    "You must load the sweep WAV before repeating measurements.\n"
-                    "Load it now?",
+                    message,
                     QrewMessageBox.Yes | QrewMessageBox.No,
-                    QrewMessageBox.Yes,
                 )
                 == QrewMessageBox.Yes
             ):
@@ -2327,26 +2354,57 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    # Start Flask in a background thread
-    flask_thread = Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
+    # Start Flask in a background thread with error handling
+    try:
+        flask_thread = Thread(target=run_flask_server, daemon=True)
+        flask_thread.start()
+        print("🔄 Flask server thread started...")
 
-    time.sleep(1)
+        # Give Flask server more time to start under PyInstaller
+        time.sleep(2)
+
+        # Verify Flask server is running
+        import requests
+
+        try:
+            response = requests.get("http://127.0.0.1:5555/health", timeout=5)
+            if response.status_code == 200:
+                print("✅ Flask server verified running")
+            else:
+                print(f"⚠️  Flask server code {response.status_code}")
+        except Exception as e:
+            print(f"⚠️  Flask server verification failed: {e}")
+            print("   Continuing anyway, REW subscriptions may not work")
+
+    except Exception as e:
+        print(f"❌ Failed to start Flask server: {e}")
+        print("   Application will continue but REW integration may not work")
 
     # Create Qt application
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(GLOBAL_STYLE)
-
     # app.setStyleSheet(TOOLTIP_STYLE)
     # Check REW connection
     wait_for_rew_qt()
 
-    # Initialize all subscriptions
-    initialize_rew_subscriptions()
+    # Initialize all subscriptions (with error handling)
+    try:
+        initialize_rew_subscriptions()
+        print("✅ REW subscriptions initialized")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize REW subscriptions: {e}")
+        print("   You may need to restart the application")
 
     # Create and show main window
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec_())
+    try:
+        exit_code = app.exec_()
+    finally:
+        # Ensure Flask server is stopped on exit
+        print("🛑 Shutting down Flask server...")
+        stop_flask_server()
+
+    sys.exit(exit_code)
